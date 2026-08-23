@@ -1,0 +1,75 @@
+{
+	# Set this in the production environment so the ACME CA can contact the
+	# platform operator. Caddy retains and renews certificates in /data.
+	email {$CADDY_ACME_EMAIL}
+
+	# Caddy's stock HTTP on-demand permission module appends ?domain= and does
+	# not support request headers. It calls the loopback-only route below; that
+	# route attaches X-Internal-Token before proxying to tenant-service.
+	on_demand_tls {
+		ask http://127.0.0.1:80/internal/edge/tls-authorize
+	}
+}
+
+# This listener has two paths. The TLS ask route can be reached only by Caddy's
+# own loopback request. All public HTTP requests are redirected before reaching
+# gateway-service, so unverified names cannot be served through the application.
+:80 {
+	route {
+		@local_tls_ask {
+			remote_ip 127.0.0.1 ::1
+			path /internal/edge/tls-authorize
+		}
+		handle @local_tls_ask {
+			rewrite * /internal/v1/domains/tls-authorize
+			reverse_proxy tenant-service:8080 {
+				header_up X-Internal-Token {$INTERNAL_AUTH_TOKEN}
+				header_up Host tenant-service
+			}
+		}
+
+		# Do not permit an internet caller to use the loopback helper as an
+		# authorization oracle, even though tenant-service itself is private.
+		@tls_ask_path path /internal/edge/tls-authorize
+		handle @tls_ask_path {
+			respond "forbidden" 403
+		}
+
+		redir https://{host}{uri} permanent
+	}
+}
+
+# A hostless HTTPS site is required for custom domains that are discovered at
+# handshake time. on_demand_tls asks tenant-service before every new issuance;
+# a non-2xx answer aborts the handshake and no certificate is requested.
+https:// {
+	tls {
+		on_demand
+	}
+
+	@api path /api/*
+	handle @api {
+		reverse_proxy gateway-service:8080 {
+			# Caddy preserves Host by default. Set it explicitly as a regression
+			# guard because gateway-service resolves tenants from this original host.
+			header_up Host {http.request.host}
+			# Gateway derives these itself. Never forward spoofable client values.
+			header_up -X-Internal-Token
+			header_up -X-Tenant-ID
+			header_up -X-App-Type
+		}
+	}
+
+	# Caddy cannot select an arbitrary custom domain's frontend from the response
+	# of an HTTP lookup. Gateway already resolves Host against tenant-service, so
+	# it dispatches booking domains to booking-web and admin domains to admin-web.
+	# Caddy remains TLS-only infrastructure and never owns domain business state.
+	handle {
+		reverse_proxy gateway-service:8080 {
+			header_up Host {http.request.host}
+			header_up -X-Internal-Token
+			header_up -X-Tenant-ID
+			header_up -X-App-Type
+		}
+	}
+}

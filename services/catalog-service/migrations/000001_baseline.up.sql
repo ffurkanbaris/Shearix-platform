@@ -1,0 +1,1 @@
+-- Immutable baseline for catalog-service. Domain tables follow in a later migration.

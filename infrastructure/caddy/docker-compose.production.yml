@@ -1,0 +1,156 @@
+# Production edge overlay. Use with:
+# docker compose -f docker-compose.yml -f infrastructure/caddy/docker-compose.production.yml up -d
+# The base Compose file remains HTTP-only for local development.
+services:
+  postgres:
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      TENANT_DB_OWNER_PASSWORD: ${TENANT_DB_OWNER_PASSWORD:?TENANT_DB_OWNER_PASSWORD is required}
+      TENANT_DB_APP_PASSWORD: ${TENANT_DB_APP_PASSWORD:?TENANT_DB_APP_PASSWORD is required}
+      AUTH_DB_OWNER_PASSWORD: ${AUTH_DB_OWNER_PASSWORD:?AUTH_DB_OWNER_PASSWORD is required}
+      AUTH_DB_APP_PASSWORD: ${AUTH_DB_APP_PASSWORD:?AUTH_DB_APP_PASSWORD is required}
+      BARBER_DB_OWNER_PASSWORD: ${BARBER_DB_OWNER_PASSWORD:?BARBER_DB_OWNER_PASSWORD is required}
+      BARBER_DB_APP_PASSWORD: ${BARBER_DB_APP_PASSWORD:?BARBER_DB_APP_PASSWORD is required}
+      CATALOG_DB_OWNER_PASSWORD: ${CATALOG_DB_OWNER_PASSWORD:?CATALOG_DB_OWNER_PASSWORD is required}
+      CATALOG_DB_APP_PASSWORD: ${CATALOG_DB_APP_PASSWORD:?CATALOG_DB_APP_PASSWORD is required}
+      SCHEDULING_DB_OWNER_PASSWORD: ${SCHEDULING_DB_OWNER_PASSWORD:?SCHEDULING_DB_OWNER_PASSWORD is required}
+      SCHEDULING_DB_APP_PASSWORD: ${SCHEDULING_DB_APP_PASSWORD:?SCHEDULING_DB_APP_PASSWORD is required}
+      APPOINTMENT_DB_OWNER_PASSWORD: ${APPOINTMENT_DB_OWNER_PASSWORD:?APPOINTMENT_DB_OWNER_PASSWORD is required}
+      APPOINTMENT_DB_APP_PASSWORD: ${APPOINTMENT_DB_APP_PASSWORD:?APPOINTMENT_DB_APP_PASSWORD is required}
+      NOTIFICATION_DB_OWNER_PASSWORD: ${NOTIFICATION_DB_OWNER_PASSWORD:?NOTIFICATION_DB_OWNER_PASSWORD is required}
+      NOTIFICATION_DB_APP_PASSWORD: ${NOTIFICATION_DB_APP_PASSWORD:?NOTIFICATION_DB_APP_PASSWORD is required}
+      CUSTOMER_DB_OWNER_PASSWORD: ${CUSTOMER_DB_OWNER_PASSWORD:?CUSTOMER_DB_OWNER_PASSWORD is required}
+      CUSTOMER_DB_APP_PASSWORD: ${CUSTOMER_DB_APP_PASSWORD:?CUSTOMER_DB_APP_PASSWORD is required}
+  redis:
+    restart: unless-stopped
+  nats:
+    restart: unless-stopped
+
+  tenant-seed:
+    entrypoint: ["/bin/true"]
+    command: !reset []
+    volumes: !reset []
+  auth-seed:
+    entrypoint: ["/bin/true"]
+    command: !reset []
+    volumes: !reset []
+
+  gateway-service:
+    # Caddy is the sole host-published application edge in production.
+    ports: !reset []
+    networks: !override [private]
+    restart: "on-failure:5"
+    environment:
+      APP_ENV: production
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
+      PLATFORM_ADMIN_TOKEN: ${PLATFORM_ADMIN_TOKEN:?PLATFORM_ADMIN_TOKEN is required}
+
+  admin-web:
+    ports: !reset []
+    networks: !override [private]
+    restart: "on-failure:5"
+
+  booking-web:
+    ports: !reset []
+    networks: !override [private]
+    restart: "on-failure:5"
+
+  auth-service:
+    restart: "on-failure:5"
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://auth_db_app:${AUTH_DB_APP_PASSWORD:?AUTH_DB_APP_PASSWORD is required}@postgres:5432/auth_db?sslmode=disable
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:?EMAIL_PROVIDER is required}
+      EMAIL_FROM: ${EMAIL_FROM:?EMAIL_FROM is required}
+      SMTP_ADDRESS: ${SMTP_ADDRESS:?SMTP_ADDRESS is required}
+      SMTP_USERNAME: ${SMTP_USERNAME:?SMTP_USERNAME is required}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD is required}
+      AUTH_COOKIE_NAME: __Host-barber_session
+      AUTH_COOKIE_SECURE: "true"
+
+  tenant-service:
+    restart: "on-failure:5"
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://tenant_db_app:${TENANT_DB_APP_PASSWORD:?TENANT_DB_APP_PASSWORD is required}@postgres:5432/tenant_db?sslmode=disable
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
+  barber-service:
+    restart: "on-failure:5"
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://barber_db_app:${BARBER_DB_APP_PASSWORD:?BARBER_DB_APP_PASSWORD is required}@postgres:5432/barber_db?sslmode=disable
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
+  catalog-service:
+    restart: "on-failure:5"
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://catalog_db_app:${CATALOG_DB_APP_PASSWORD:?CATALOG_DB_APP_PASSWORD is required}@postgres:5432/catalog_db?sslmode=disable
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
+  scheduling-service:
+    restart: "on-failure:5"
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://scheduling_db_app:${SCHEDULING_DB_APP_PASSWORD:?SCHEDULING_DB_APP_PASSWORD is required}@postgres:5432/scheduling_db?sslmode=disable
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
+  appointment-service:
+    restart: "on-failure:5"
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://appointment_db_app:${APPOINTMENT_DB_APP_PASSWORD:?APPOINTMENT_DB_APP_PASSWORD is required}@postgres:5432/appointment_db?sslmode=disable
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
+  customer-service:
+    restart: "on-failure:5"
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://customer_db_app:${CUSTOMER_DB_APP_PASSWORD:?CUSTOMER_DB_APP_PASSWORD is required}@postgres:5432/customer_db?sslmode=disable
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:?EMAIL_PROVIDER is required}
+      EMAIL_FROM: ${EMAIL_FROM:?EMAIL_FROM is required}
+      SMTP_ADDRESS: ${SMTP_ADDRESS:?SMTP_ADDRESS is required}
+      SMTP_USERNAME: ${SMTP_USERNAME:?SMTP_USERNAME is required}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD is required}
+  notification-service:
+    restart: "on-failure:5"
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://notification_db_app:${NOTIFICATION_DB_APP_PASSWORD:?NOTIFICATION_DB_APP_PASSWORD is required}@postgres:5432/notification_db?sslmode=disable
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:?EMAIL_PROVIDER is required}
+      EMAIL_FROM: ${EMAIL_FROM:?EMAIL_FROM is required}
+      SMTP_ADDRESS: ${SMTP_ADDRESS:?SMTP_ADDRESS is required}
+      SMTP_USERNAME: ${SMTP_USERNAME:?SMTP_USERNAME is required}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD is required}
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    environment:
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
+      # Production must override this with a monitored operator address. The
+      # fallback only keeps configuration validation usable in local CI.
+      CADDY_ACME_EMAIL: ${CADDY_ACME_EMAIL:?CADDY_ACME_EMAIL is required}
+    depends_on:
+      gateway-service: {condition: service_healthy}
+      tenant-service: {condition: service_healthy}
+      admin-web: {condition: service_healthy}
+      booking-web: {condition: service_healthy}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:2019/config/ >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    volumes:
+      - ./infrastructure/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [public, private]
+
+volumes:
+  caddy_data: {}
+  caddy_config: {}

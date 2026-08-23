@@ -1,0 +1,6 @@
+version: "2"
+sql:
+ - engine: postgresql
+   queries: sql/queries.sql
+   schema: migrations
+   gen: {go: {package: generated, out: generated, sql_package: pgx/v5}}

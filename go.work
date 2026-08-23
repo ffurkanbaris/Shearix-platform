@@ -1,0 +1,14 @@
+go 1.26.0
+
+use (
+	./platform
+	./services/appointment-service
+	./services/auth-service
+	./services/barber-service
+	./services/catalog-service
+	./services/customer-service
+	./services/gateway-service
+	./services/notification-service
+	./services/scheduling-service
+	./services/tenant-service
+)

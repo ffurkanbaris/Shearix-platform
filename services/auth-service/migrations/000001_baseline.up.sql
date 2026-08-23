@@ -1,0 +1,1 @@
+-- Immutable baseline for auth-service. Authentication schema follows in a later migration.

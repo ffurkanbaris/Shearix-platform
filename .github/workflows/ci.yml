@@ -1,0 +1,161 @@
+name: Repository CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend-static:
+    name: Backend / Static
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.26.x', cache-dependency-path: '**/go.sum'}
+      - run: make verify-go-static
+
+  backend-tests:
+    name: Backend / Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.26.x', cache-dependency-path: '**/go.sum'}
+      - run: make test
+      - run: make test-race
+      - run: ./scripts/ci/go-modules.sh coverage
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: backend-coverage, path: coverage/*.out, retention-days: 7}
+
+  sqlc:
+    name: Backend / sqlc
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: make sqlc-check
+
+  frontend-admin:
+    name: Frontend / Admin
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults: {run: {working-directory: apps/admin-web}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm, cache-dependency-path: apps/admin-web/package-lock.json}
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  frontend-booking:
+    name: Frontend / Booking
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults: {run: {working-directory: apps/booking-web}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm, cache-dependency-path: apps/booking-web/package-lock.json}
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  integrations:
+    name: Backend / Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env: {COMPOSE_PROJECT_NAME: barber_ci_integration}
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test-integration
+      - name: Sanitized service diagnostics
+        if: failure()
+        run: docker compose --profile test ps
+      - name: Cleanup
+        if: always()
+        run: docker compose --profile test down -v --remove-orphans
+
+  migrations:
+    name: Database / Migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env: {COMPOSE_PROJECT_NAME: barber_ci_migrations}
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/ci/migration-checksums.sh
+      - run: make test-migrations
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v --remove-orphans
+
+  compose:
+    name: Infrastructure / Compose
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: make verify-compose
+
+  containers:
+    name: Containers / Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - run: docker compose build
+      - run: docker pull caddy:2.10-alpine
+
+  e2e:
+    name: E2E / Critical Flow
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env: {COMPOSE_PROJECT_NAME: barber_ci_e2e}
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/ci/e2e-smoke.sh
+      - name: Sanitized service diagnostics
+        if: failure()
+        run: docker compose -f docker-compose.yml -f scripts/ci/e2e-compose.yml ps
+      - name: Cleanup
+        if: always()
+        run: docker compose -f docker-compose.yml -f scripts/ci/e2e-compose.yml down -v --remove-orphans
+
+  vulnerabilities:
+    name: Dependencies / Vulnerability Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.26.x', cache-dependency-path: '**/go.sum'}
+      - uses: actions/setup-node@v4
+        with: {node-version: 22}
+      - run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+      - run: |
+          while IFS= read -r module; do
+            echo "==> govulncheck: $module"
+            (cd "$module" && GOWORK=off govulncheck ./...)
+          done < scripts/ci/go-modules.txt
+        continue-on-error: true
+      - run: npm audit --prefix apps/admin-web --audit-level=high
+        continue-on-error: true
+      - run: npm audit --prefix apps/booking-web --audit-level=high
+        continue-on-error: true

@@ -1,0 +1,312 @@
+"use client";
+
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { ApiError, apiClient } from "@/lib/api";
+import { displayDateTime, localDate } from "@/lib/format";
+import type { Appointment, AvailabilitySlot, Barber, Branch, CatalogService, TenantConfig } from "@/lib/types";
+import { canWrite } from "@/lib/types";
+import { useSession } from "@/components/auth-gate";
+import {
+  ActionMenu,
+  ConfirmDialog,
+  Drawer,
+  EmptyState,
+  ErrorNotice,
+  FormError,
+  LoadingState,
+  Modal,
+  PageHeader,
+  StatusBadge,
+} from "@/components/ui";
+
+type FormState = { branch_id: string; barber_id: string; service_id: string; customer_name: string; customer_contact: string; date: string; start_at: string };
+const emptyForm = (): FormState => ({ branch_id: "", barber_id: "", service_id: "", customer_name: "", customer_contact: "", date: localDate(), start_at: "" });
+
+function monday(date: Date): Date {
+  const r = new Date(date); const d = r.getDay(); r.setDate(r.getDate() - ((d + 6) % 7)); return r;
+}
+function isoDate(d: Date): string { return d.toISOString().slice(0, 10); }
+
+export default function AppointmentsPage() {
+  const { principal } = useSession();
+  const editable = canWrite(principal.role) || principal.role === "RECEPTIONIST";
+  const [items, setItems] = useState<Appointment[]>();
+  const [barbers, setBarbers] = useState<Barber[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [services, setServices] = useState<CatalogService[]>([]);
+  const [config, setConfig] = useState<TenantConfig>();
+  const [form, setForm] = useState<FormState>(emptyForm);
+  const [slots, setSlots] = useState<AvailabilitySlot[]>([]);
+  const [editing, setEditing] = useState<Appointment>();
+  const [showCreate, setShowCreate] = useState(false);
+  const [view, setView] = useState<"day" | "week">("day");
+  const [calendarDate, setCalendarDate] = useState(localDate());
+  const [error, setError] = useState<unknown>();
+  const [formError, setFormError] = useState("");
+  const [cancelTarget, setCancelTarget] = useState<Appointment>();
+  const [saving, setSaving] = useState(false);
+
+  const load = async () => {
+    try {
+      const [appointments, allBarbers, allBranches, allServices, tenantConfig] = await Promise.all([
+        apiClient.get<Appointment[]>("/v1/admin/appointments"),
+        apiClient.get<Barber[]>("/v1/admin/barbers"),
+        apiClient.get<Branch[]>("/v1/admin/branches"),
+        apiClient.get<CatalogService[]>("/v1/admin/services"),
+        apiClient.get<TenantConfig>("/v1/public/config"),
+      ]);
+      setItems(appointments); setBarbers(allBarbers); setBranches(allBranches); setServices(allServices); setConfig(tenantConfig);
+    } catch (cause) { setError(cause); }
+  };
+  useEffect(() => { void load(); }, []);
+
+  const availableBarbers  = useMemo(() => barbers.filter((b) => b.active && (!form.branch_id || b.branch_ids?.includes(form.branch_id))), [barbers, form.branch_id]);
+  const availableServices = useMemo(() => services.filter((s) => s.active), [services]);
+
+  const calendarDays = useMemo(() => {
+    const cur = new Date(`${calendarDate}T12:00:00`);
+    if (view === "day") return [cur];
+    const start = monday(cur);
+    return Array.from({ length: 7 }, (_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return d; });
+  }, [calendarDate, view]);
+
+  const calendarItems = useMemo(
+    () => items?.filter((a) => calendarDays.some((d) => new Date(a.start_at).toDateString() === d.toDateString())) ?? [],
+    [items, calendarDays],
+  );
+
+  async function loadSlots() {
+    if (!form.barber_id || !form.service_id || !form.date) return;
+    setFormError("");
+    try {
+      const q = new URLSearchParams({ barber_id: form.barber_id, service_id: form.service_id, date: form.date });
+      const response = await apiClient.get<AvailabilitySlot[]>(`/v1/admin/availability?${q.toString()}`);
+      setSlots(response);
+      if (!response.some((s) => s.start_at === form.start_at)) setForm((f) => ({ ...f, start_at: "" }));
+    } catch (cause) { setSlots([]); setFormError(cause instanceof ApiError ? cause.message : "Unable to load availability."); }
+  }
+
+  async function create(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!editable || !form.start_at) return; setFormError(""); setSaving(true);
+    try {
+      await apiClient.post<Appointment>("/v1/admin/appointments", { branch_id: form.branch_id, barber_id: form.barber_id, service_id: form.service_id, customer_name: form.customer_name, customer_contact: form.customer_contact, start_at: form.start_at }, { headers: { "Idempotency-Key": crypto.randomUUID() } });
+      setForm(emptyForm()); setSlots([]); setShowCreate(false); await load();
+    } catch (cause) { setFormError(cause instanceof ApiError ? cause.message : "Unable to create the appointment."); }
+    finally { setSaving(false); }
+  }
+
+  async function transition(item: Appointment, action: "confirm" | "cancel" | "complete" | "no-show") {
+    if (!editable) return; setSaving(true);
+    try { await apiClient.post(`/v1/admin/appointments/${item.id}/${action}`); await load(); }
+    catch (cause) { setFormError(cause instanceof ApiError ? cause.message : "Unable to update the appointment."); }
+    finally { setSaving(false); setCancelTarget(undefined); }
+  }
+
+  async function reschedule(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!editing || !form.start_at) return; setSaving(true);
+    try { await apiClient.post(`/v1/admin/appointments/${editing.id}/reschedule`, { start_at: form.start_at }); setEditing(undefined); setForm(emptyForm()); setSlots([]); await load(); }
+    catch (cause) { setFormError(cause instanceof ApiError ? cause.message : "Unable to reschedule this appointment."); }
+    finally { setSaving(false); }
+  }
+
+  function beginReschedule(item: Appointment) {
+    setEditing(item);
+    const localStart = new Date(item.start_at);
+    setForm({ branch_id: item.branch_id, barber_id: item.barber_id, service_id: item.service_id, customer_name: item.customer_name, customer_contact: item.customer_contact, date: isoDate(localStart), start_at: "" });
+    setSlots([]); setFormError("");
+  }
+
+  function navigate(delta: number) {
+    const d = new Date(`${calendarDate}T12:00:00`);
+    d.setDate(d.getDate() + (view === "week" ? delta * 7 : delta));
+    setCalendarDate(isoDate(d));
+  }
+
+  if (error) return <><PageHeader title="Appointments" /><ErrorNotice error={error} onRetry={() => { setError(undefined); void load(); }} /></>;
+  if (!items || !config) return <><PageHeader title="Appointments" description="Create and manage tenant appointments." /><LoadingState /></>;
+
+  const tz = config.business_timezone;
+
+  return (
+    <>
+      <PageHeader
+        title="Appointments"
+        description={`Availability from scheduling-service. Times in ${tz}.`}
+        action={editable ? <button className="button primary" onClick={() => { setShowCreate(true); setForm(emptyForm()); setSlots([]); setFormError(""); }}>+ New appointment</button> : undefined}
+      />
+
+      {formError && <div className="notice error" style={{ marginBottom: "1rem" }}>{formError}</div>}
+
+      {/* Calendar */}
+      <section className="panel">
+        <div className="panel-header">
+          <div className="panel-header-text"><h2>Calendar</h2></div>
+          <div className="cal-header" style={{ margin: 0 }}>
+            <div className="button-row">
+              <button className={`button sm${view === "day" ? " primary" : " secondary"}`} onClick={() => setView("day")}>Day</button>
+              <button className={`button sm${view === "week" ? " primary" : " secondary"}`} onClick={() => setView("week")}>Week</button>
+            </div>
+            <div className="cal-nav">
+              <button className="button ghost sm icon" aria-label="Previous" onClick={() => navigate(-1)}>‹</button>
+              <input aria-label="Calendar date" type="date" value={calendarDate} onChange={(e) => setCalendarDate(e.target.value)} style={{ width: "auto", minWidth: "9rem" }} />
+              <button className="button ghost sm icon" aria-label="Next" onClick={() => navigate(1)}>›</button>
+            </div>
+          </div>
+        </div>
+
+        <div className={`calendar ${view}`}>
+          {calendarDays.map((day) => {
+            const dayItems = calendarItems
+              .filter((a) => new Date(a.start_at).toDateString() === day.toDateString())
+              .sort((a, b) => a.start_at.localeCompare(b.start_at));
+            return (
+              <section className="calendar-day" key={day.toISOString()}>
+                <h3>{new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(day)}</h3>
+                {dayItems.length === 0 && <p style={{ color: "var(--muted)", fontSize: ".75rem" }}>No appointments</p>}
+                {dayItems.map((a) => (
+                  <article className={`appt-card${a.status === "cancelled" ? " cancelled" : a.status === "completed" ? " completed" : a.status === "no_show" ? " no-show" : ""}`} key={a.id}>
+                    <strong>{a.customer_name}</strong>
+                    <span>{displayDateTime(a.start_at, tz)}</span>
+                    <StatusBadge label={a.status.replace("_", " ")} active={a.status === "pending" || a.status === "confirmed"} />
+                  </article>
+                ))}
+              </section>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* Appointment list */}
+      <section className="panel">
+        <div className="panel-header">
+          <div className="panel-header-text"><h2>All appointments</h2><p className="muted">{items.length} total</p></div>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Customer</th>
+                <th>Time</th>
+                <th>Status</th>
+                {editable && <th style={{ width: "3rem" }} />}
+              </tr>
+            </thead>
+            <tbody>
+              {items.length === 0 ? (
+                <tr><td colSpan={editable ? 4 : 3}><EmptyState title="No appointments" body="Create an appointment after setting up a branch, barber, service, and schedule." /></td></tr>
+              ) : (
+                items.sort((a, b) => b.start_at.localeCompare(a.start_at)).map((a) => {
+                  const menuItems = [
+                    ...(a.status === "pending" ? [{ label: "Confirm", onClick: () => void transition(a, "confirm") }] : []),
+                    ...((a.status === "pending" || a.status === "confirmed") ? [{ label: "Reschedule", onClick: () => { beginReschedule(a); } }] : []),
+                    ...(a.status === "confirmed" ? [{ label: "Complete", onClick: () => void transition(a, "complete") }] : []),
+                    ...(a.status === "confirmed" ? [{ label: "No-show", onClick: () => void transition(a, "no-show") }] : []),
+                    ...((a.status === "pending" || a.status === "confirmed") ? [{ label: "Cancel", onClick: () => setCancelTarget(a), variant: "danger" as const }] : []),
+                  ];
+                  return (
+                    <tr key={a.id}>
+                      <td>
+                        <strong>{a.customer_name}</strong>
+                        <span className="sub">{a.customer_contact}</span>
+                      </td>
+                      <td>{displayDateTime(a.start_at, tz)}</td>
+                      <td>
+                        <StatusBadge label={a.status.replace("_", " ")} active={a.status === "pending" || a.status === "confirmed"} />
+                      </td>
+                      {editable && <td className="actions">{menuItems.length > 0 && <ActionMenu items={menuItems} />}</td>}
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Create drawer */}
+      {showCreate && (
+        <Drawer
+          title="New appointment"
+          onClose={() => { setShowCreate(false); setForm(emptyForm()); setSlots([]); setFormError(""); }}
+          footer={
+            <>
+              <button className="button secondary" onClick={() => { setShowCreate(false); setForm(emptyForm()); setSlots([]); }} type="button">Cancel</button>
+              <button className="button primary" disabled={!form.start_at || saving} form="appt-create-form" type="submit">{saving ? "Creating…" : "Create appointment"}</button>
+            </>
+          }
+        >
+          <form id="appt-create-form" onSubmit={create} className="form-stack">
+            <p className="muted" style={{ fontSize: ".8125rem" }}>Times are offered by the authoritative availability API in {tz}.</p>
+            <label>Customer name<input value={form.customer_name} onChange={(e) => setForm({ ...form, customer_name: e.target.value })} required /></label>
+            <label>Contact<input value={form.customer_contact} onChange={(e) => setForm({ ...form, customer_contact: e.target.value })} required /></label>
+            <label>Branch
+              <select value={form.branch_id} onChange={(e) => setForm({ ...form, branch_id: e.target.value, barber_id: "", start_at: "" })} required>
+                <option value="">Select branch</option>
+                {branches.filter((b) => b.active).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </label>
+            <label>Barber
+              <select value={form.barber_id} onChange={(e) => setForm({ ...form, barber_id: e.target.value, start_at: "" })} required>
+                <option value="">Select barber</option>
+                {availableBarbers.map((b) => <option key={b.id} value={b.id}>{b.display_name}</option>)}
+              </select>
+            </label>
+            <label>Service
+              <select value={form.service_id} onChange={(e) => setForm({ ...form, service_id: e.target.value, start_at: "" })} required>
+                <option value="">Select service</option>
+                {availableServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </label>
+            <label>Date<input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value, start_at: "" })} required /></label>
+            <div className="slot-action">
+              <button className="button secondary sm" type="button" onClick={() => void loadSlots()} disabled={!form.barber_id || !form.service_id}>Load available slots</button>
+              {slots.length > 0 && (
+                <select value={form.start_at} onChange={(e) => setForm({ ...form, start_at: e.target.value })} required>
+                  <option value="">Select a slot</option>
+                  {slots.map((s) => <option key={s.start_at} value={s.start_at}>{displayDateTime(s.start_at, tz)}</option>)}
+                </select>
+              )}
+            </div>
+            <FormError value={formError} />
+          </form>
+        </Drawer>
+      )}
+
+      {/* Reschedule modal */}
+      {editing && (
+        <Modal title={`Reschedule: ${editing.customer_name}`} onClose={() => { setEditing(undefined); setForm(emptyForm()); setSlots([]); }}>
+          <form className="form-stack" onSubmit={reschedule}>
+            <p className="muted" style={{ fontSize: ".8125rem" }}>Select a new available slot in {tz}.</p>
+            <label>Date<input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value, start_at: "" })} required /></label>
+            <div className="slot-action">
+              <button className="button secondary sm" type="button" onClick={() => void loadSlots()} disabled={!form.barber_id || !form.service_id}>Load slots</button>
+              {slots.length > 0 && (
+                <select value={form.start_at} onChange={(e) => setForm({ ...form, start_at: e.target.value })} required>
+                  <option value="">Select a slot</option>
+                  {slots.map((s) => <option key={s.start_at} value={s.start_at}>{displayDateTime(s.start_at, tz)}</option>)}
+                </select>
+              )}
+            </div>
+            <FormError value={formError} />
+            <div className="dialog-actions">
+              <button className="button secondary" onClick={() => { setEditing(undefined); setForm(emptyForm()); setSlots([]); }} type="button">Cancel</button>
+              <button className="button primary" disabled={!form.start_at || saving}>{saving ? "Rescheduling…" : "Reschedule"}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Cancel confirm */}
+      {cancelTarget && (
+        <ConfirmDialog
+          title="Cancel appointment?"
+          description={`Cancel ${cancelTarget.customer_name}'s appointment? This action cannot be undone.`}
+          confirmLabel="Cancel appointment"
+          busy={saving}
+          onCancel={() => setCancelTarget(undefined)}
+          onConfirm={() => void transition(cancelTarget, "cancel")}
+        />
+      )}
+    </>
+  );
+}

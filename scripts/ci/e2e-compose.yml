@@ -1,0 +1,7 @@
+services:
+  gateway-service:
+    ports: !override ["18080:8080"]
+  admin-web:
+    ports: !override ["13000:3000"]
+  booking-web:
+    ports: !override ["13001:3000"]

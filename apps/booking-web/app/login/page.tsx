@@ -1,0 +1,9 @@
+"use client";
+import Link from "next/link";
+import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
+import { ApiError, apiClient } from "@/lib/api";
+import { useCustomerSession } from "@/components/session";
+import { EmailLoginRequest, normalizeAuthEmail } from "../../../shared/auth-contract";
+
+export default function CustomerLogin() { const router=useRouter(); const {refresh}=useCustomerSession(); const [email,setEmail]=useState(""); const [password,setPassword]=useState(""); const [error,setError]=useState(""); const [busy,setBusy]=useState(false); async function submit(e:FormEvent){e.preventDefault();setBusy(true);setError("");try{const request:EmailLoginRequest={email:normalizeAuthEmail(email),password};const account=await apiClient.post<{must_change_password:boolean}>("/v1/public/customer/auth/login",request);await refresh();router.push(account.must_change_password?"/account/security":"/account")}catch(x){setError(x instanceof ApiError?x.message:"Unable to sign in.")}finally{setBusy(false)}} return <main className="account-page"><Link className="eyebrow" href="/">← Back to booking</Link><h1>Welcome back</h1><p className="account-lede">Sign in to view and manage your appointments.</p><form className="account-form" onSubmit={submit}><label>Email<input value={email} type="email" autoComplete="username" onChange={e=>setEmail(e.target.value)} required placeholder="you@example.com" /></label><label>Password<input value={password} type="password" autoComplete="current-password" onChange={e=>setPassword(e.target.value)} required /></label>{error&&<p className="error" role="alert">{error}</p>}<button className="book-button" disabled={busy}>{busy?"Signing in…":"Sign in"}</button></form><p className="account-switch">New here? <Link href="/register">Create an account</Link></p><Link className="account-secondary" href="/forgot-password">Forgot password?</Link></main> }

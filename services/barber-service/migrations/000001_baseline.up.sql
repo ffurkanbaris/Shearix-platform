@@ -1,0 +1,1 @@
+-- Immutable baseline for barber-service. Domain tables follow in a later migration.

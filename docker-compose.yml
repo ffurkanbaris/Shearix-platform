@@ -1,0 +1,369 @@
+x-app-healthcheck: &app-healthcheck
+  test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/ready >/dev/null"]
+  interval: 5s
+  timeout: 3s
+  retries: 20
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres-dev-password}
+      TENANT_DB_OWNER_PASSWORD: ${TENANT_DB_OWNER_PASSWORD:-tenant-owner-dev-password}
+      TENANT_DB_APP_PASSWORD: ${TENANT_DB_APP_PASSWORD:-tenant-app-dev-password}
+      AUTH_DB_OWNER_PASSWORD: ${AUTH_DB_OWNER_PASSWORD:-auth-owner-dev-password}
+      AUTH_DB_APP_PASSWORD: ${AUTH_DB_APP_PASSWORD:-auth-app-dev-password}
+      BARBER_DB_OWNER_PASSWORD: ${BARBER_DB_OWNER_PASSWORD:-barber-owner-dev-password}
+      BARBER_DB_APP_PASSWORD: ${BARBER_DB_APP_PASSWORD:-barber-app-dev-password}
+      CATALOG_DB_OWNER_PASSWORD: ${CATALOG_DB_OWNER_PASSWORD:-catalog-owner-dev-password}
+      CATALOG_DB_APP_PASSWORD: ${CATALOG_DB_APP_PASSWORD:-catalog-app-dev-password}
+      SCHEDULING_DB_OWNER_PASSWORD: ${SCHEDULING_DB_OWNER_PASSWORD:-scheduling-owner-dev-password}
+      SCHEDULING_DB_APP_PASSWORD: ${SCHEDULING_DB_APP_PASSWORD:-scheduling-app-dev-password}
+      APPOINTMENT_DB_OWNER_PASSWORD: ${APPOINTMENT_DB_OWNER_PASSWORD:-appointment-owner-dev-password}
+      APPOINTMENT_DB_APP_PASSWORD: ${APPOINTMENT_DB_APP_PASSWORD:-appointment-app-dev-password}
+      NOTIFICATION_DB_OWNER_PASSWORD: ${NOTIFICATION_DB_OWNER_PASSWORD:-notification-owner-dev-password}
+      NOTIFICATION_DB_APP_PASSWORD: ${NOTIFICATION_DB_APP_PASSWORD:-notification-app-dev-password}
+      CUSTOMER_DB_OWNER_PASSWORD: ${CUSTOMER_DB_OWNER_PASSWORD:-customer-owner-dev-password}
+      CUSTOMER_DB_APP_PASSWORD: ${CUSTOMER_DB_APP_PASSWORD:-customer-app-dev-password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init:/docker-entrypoint-initdb.d:ro
+    networks: [private]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redis_data:/data"]
+    networks: [private]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    volumes: ["nats_data:/data"]
+    networks: [private]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8222/healthz >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  tenant-migrate:
+    image: barber-appointment-tenant-service:latest
+    build: {context: ., dockerfile: services/tenant-service/Dockerfile}
+    command: ["--migrate-only"]
+    environment:
+      MIGRATION_DATABASE_URL: postgresql://tenant_db_migrator:${TENANT_DB_OWNER_PASSWORD:-tenant-owner-dev-password}@postgres:5432/tenant_db?sslmode=disable
+      DATABASE_OWNER_ROLE: tenant_db_owner
+    depends_on: {postgres: {condition: service_healthy}}
+    networks: [private]
+  tenant-seed:
+    image: postgres:16-alpine
+    environment: {PGPASSWORD: "${TENANT_DB_OWNER_PASSWORD:-tenant-owner-dev-password}"}
+    volumes: ["./infrastructure/seeds/tenant-development.sql:/seed.sql:ro"]
+    command: ["psql", "-h", "postgres", "-U", "tenant_db_migrator", "-d", "tenant_db", "-v", "ON_ERROR_STOP=1", "-f", "/seed.sql"]
+    depends_on: {tenant-migrate: {condition: service_completed_successfully}}
+    networks: [private]
+  auth-migrate:
+    image: barber-appointment-auth-service:latest
+    build: {context: ., dockerfile: services/auth-service/Dockerfile}
+    command: ["--migrate-only"]
+    environment: {MIGRATION_DATABASE_URL: "postgresql://auth_db_migrator:${AUTH_DB_OWNER_PASSWORD:-auth-owner-dev-password}@postgres:5432/auth_db?sslmode=disable", DATABASE_OWNER_ROLE: auth_db_owner}
+    depends_on: {postgres: {condition: service_healthy}}
+    networks: [private]
+  auth-seed:
+    image: postgres:16-alpine
+    environment: {PGPASSWORD: "${AUTH_DB_OWNER_PASSWORD:-auth-owner-dev-password}"}
+    volumes: ["./infrastructure/seeds/auth-development.sql:/seed.sql:ro"]
+    command: ["psql", "-h", "postgres", "-U", "auth_db_migrator", "-d", "auth_db", "-v", "ON_ERROR_STOP=1", "-f", "/seed.sql"]
+    depends_on: {auth-migrate: {condition: service_completed_successfully}}
+    networks: [private]
+  barber-migrate:
+    image: barber-appointment-barber-service:latest
+    build: {context: ., dockerfile: services/barber-service/Dockerfile}
+    command: ["--migrate-only"]
+    environment: {MIGRATION_DATABASE_URL: "postgresql://barber_db_migrator:${BARBER_DB_OWNER_PASSWORD:-barber-owner-dev-password}@postgres:5432/barber_db?sslmode=disable", DATABASE_OWNER_ROLE: barber_db_owner}
+    depends_on: {postgres: {condition: service_healthy}}
+    networks: [private]
+  catalog-migrate:
+    image: barber-appointment-catalog-service:latest
+    build: {context: ., dockerfile: services/catalog-service/Dockerfile}
+    command: ["--migrate-only"]
+    environment: {MIGRATION_DATABASE_URL: "postgresql://catalog_db_migrator:${CATALOG_DB_OWNER_PASSWORD:-catalog-owner-dev-password}@postgres:5432/catalog_db?sslmode=disable", DATABASE_OWNER_ROLE: catalog_db_owner}
+    depends_on: {postgres: {condition: service_healthy}}
+    networks: [private]
+  scheduling-migrate:
+    image: barber-appointment-scheduling-service:latest
+    build: {context: ., dockerfile: services/scheduling-service/Dockerfile}
+    command: ["--migrate-only"]
+    environment: {MIGRATION_DATABASE_URL: "postgresql://scheduling_db_migrator:${SCHEDULING_DB_OWNER_PASSWORD:-scheduling-owner-dev-password}@postgres:5432/scheduling_db?sslmode=disable", DATABASE_OWNER_ROLE: scheduling_db_owner}
+    depends_on: {postgres: {condition: service_healthy}}
+    networks: [private]
+  appointment-migrate:
+    image: barber-appointment-appointment-service:latest
+    build: {context: ., dockerfile: services/appointment-service/Dockerfile}
+    command: ["--migrate-only"]
+    environment: {MIGRATION_DATABASE_URL: "postgresql://appointment_db_migrator:${APPOINTMENT_DB_OWNER_PASSWORD:-appointment-owner-dev-password}@postgres:5432/appointment_db?sslmode=disable", DATABASE_OWNER_ROLE: appointment_db_owner}
+    depends_on: {postgres: {condition: service_healthy}}
+    networks: [private]
+  customer-migrate:
+    image: barber-appointment-customer-service:latest
+    build: {context: ., dockerfile: services/customer-service/Dockerfile}
+    command: ["--migrate-only"]
+    environment: {MIGRATION_DATABASE_URL: "postgresql://customer_db_migrator:${CUSTOMER_DB_OWNER_PASSWORD:-customer-owner-dev-password}@postgres:5432/customer_db?sslmode=disable", DATABASE_OWNER_ROLE: customer_db_owner}
+    depends_on: {postgres: {condition: service_healthy}}
+    networks: [private]
+  customer-seed:
+    image: postgres:16-alpine
+    environment: {PGPASSWORD: "${CUSTOMER_DB_OWNER_PASSWORD:-customer-owner-dev-password}"}
+    volumes: ["./infrastructure/seeds/customer-development.sql:/seed.sql:ro"]
+    command: ["psql", "-h", "postgres", "-U", "customer_db_migrator", "-d", "customer_db", "-v", "ON_ERROR_STOP=1", "-f", "/seed.sql"]
+    depends_on: {customer-migrate: {condition: service_completed_successfully}}
+    networks: [private]
+  notification-migrate:
+    image: barber-appointment-notification-service:latest
+    build: {context: ., dockerfile: services/notification-service/Dockerfile}
+    command: ["--migrate-only"]
+    environment: {MIGRATION_DATABASE_URL: "postgresql://notification_db_migrator:${NOTIFICATION_DB_OWNER_PASSWORD:-notification-owner-dev-password}@postgres:5432/notification_db?sslmode=disable", DATABASE_OWNER_ROLE: notification_db_owner}
+    depends_on: {postgres: {condition: service_healthy}}
+    networks: [private]
+  tenant-service:
+    build: {context: ., dockerfile: services/tenant-service/Dockerfile}
+    environment:
+      DATABASE_URL: postgresql://tenant_db_app:${TENANT_DB_APP_PASSWORD:-tenant-app-dev-password}@postgres:5432/tenant_db?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-replace-with-a-long-development-secret}
+      AUTH_SERVICE_URL: http://auth-service:8080
+      APP_ENV: ${APP_ENV:-development}
+    depends_on: {tenant-seed: {condition: service_completed_successfully}}
+    healthcheck: *app-healthcheck
+    networks: [private]
+  gateway-service:
+    build: {context: ., dockerfile: services/gateway-service/Dockerfile}
+    environment:
+      TENANT_SERVICE_URL: http://tenant-service:8080
+      AUTH_SERVICE_URL: http://auth-service:8080
+      BARBER_SERVICE_URL: http://barber-service:8080
+      CATALOG_SERVICE_URL: http://catalog-service:8080
+      SCHEDULING_SERVICE_URL: http://scheduling-service:8080
+      APPOINTMENT_SERVICE_URL: http://appointment-service:8080
+      NOTIFICATION_SERVICE_URL: http://notification-service:8080
+      CUSTOMER_SERVICE_URL: http://customer-service:8080
+      ADMIN_WEB_URL: http://admin-web:3000
+      BOOKING_WEB_URL: http://booking-web:3000
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-replace-with-a-long-development-secret}
+      PLATFORM_ADMIN_TOKEN: ${PLATFORM_ADMIN_TOKEN:-replace-with-a-separate-platform-development-secret}
+    depends_on: {tenant-service: {condition: service_started}, auth-service: {condition: service_started}, barber-service: {condition: service_started}, catalog-service: {condition: service_started}, scheduling-service: {condition: service_started}}
+    ports: ["8080:8080"]
+    healthcheck: *app-healthcheck
+    networks: [public, private]
+  admin-web:
+    build: {context: ., dockerfile: apps/admin-web/Dockerfile}
+    environment:
+      GATEWAY_URL: http://gateway-service:8080
+    depends_on: {gateway-service: {condition: service_healthy}}
+    ports: ["3000:3000"]
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/login').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [public, private]
+  booking-web:
+    build: {context: ., dockerfile: apps/booking-web/Dockerfile}
+    environment:
+      GATEWAY_URL: http://gateway-service:8080
+    depends_on: {gateway-service: {condition: service_healthy}}
+    ports: ["3001:3000"]
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [public, private]
+  auth-service:
+    build: {context: ., dockerfile: services/auth-service/Dockerfile}
+    environment:
+      DATABASE_URL: "postgresql://auth_db_app:${AUTH_DB_APP_PASSWORD:-auth-app-dev-password}@postgres:5432/auth_db?sslmode=disable"
+      REDIS_URL: redis://redis:6379/0
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-log}
+      EMAIL_FROM: ${EMAIL_FROM:-no-reply@barber.local}
+      APP_ENV: ${APP_ENV:-development}
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-replace-with-a-long-development-secret}
+      # Local Compose is HTTP-only. Production Caddy overrides these to the
+      # HTTPS-only __Host- cookie variant below.
+      AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-barber_session}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+    depends_on: {auth-seed: {condition: service_completed_successfully}, redis: {condition: service_healthy}}
+    healthcheck: *app-healthcheck
+    networks: [private]
+  auth-integration-test:
+    profiles: ["test"]
+    build: {context: ., dockerfile: services/auth-service/Dockerfile, target: build}
+    working_dir: /workspace/services/auth-service
+    command: ["sh", "-c", "GOWORK=off go test ./internal/repository ./internal/handler -run Integration -count=1"]
+    environment:
+      AUTH_TEST_DATABASE_URL: "postgresql://auth_db_app:${AUTH_DB_APP_PASSWORD:-auth-app-dev-password}@postgres:5432/auth_db?sslmode=disable"
+      AUTH_TEST_OWNER_DATABASE_URL: "postgresql://auth_db_migrator:${AUTH_DB_OWNER_PASSWORD:-auth-owner-dev-password}@postgres:5432/auth_db?sslmode=disable"
+      AUTH_TEST_REDIS_URL: redis://redis:6379/14
+    depends_on: {auth-migrate: {condition: service_completed_successfully}, redis: {condition: service_healthy}}
+    networks: [private]
+  customer-integration-test:
+    profiles: ["test"]
+    build: {context: ., dockerfile: services/customer-service/Dockerfile, target: build}
+    working_dir: /workspace/services/customer-service
+    command: ["sh", "-c", "GOWORK=off go test ./internal/repository ./internal/handler -run Integration -count=1"]
+    environment:
+      CUSTOMER_TEST_DATABASE_URL: "postgresql://customer_db_app:${CUSTOMER_DB_APP_PASSWORD:-customer-app-dev-password}@postgres:5432/customer_db?sslmode=disable"
+      CUSTOMER_TEST_OWNER_DATABASE_URL: "postgresql://customer_db_migrator:${CUSTOMER_DB_OWNER_PASSWORD:-customer-owner-dev-password}@postgres:5432/customer_db?sslmode=disable"
+    depends_on: {customer-migrate: {condition: service_completed_successfully}}
+    networks: [private]
+  tenant-integration-test:
+    profiles: ["test"]
+    build: {context: ., dockerfile: services/tenant-service/Dockerfile, target: build}
+    working_dir: /workspace/services/tenant-service
+    command: ["sh", "-c", "GOWORK=off go test ./internal/repository -run Integration -count=1"]
+    environment:
+      TENANT_TEST_DATABASE_URL: "postgresql://tenant_db_app:${TENANT_DB_APP_PASSWORD:-tenant-app-dev-password}@postgres:5432/tenant_db?sslmode=disable"
+      TENANT_TEST_OWNER_DATABASE_URL: "postgresql://tenant_db_migrator:${TENANT_DB_OWNER_PASSWORD:-tenant-owner-dev-password}@postgres:5432/tenant_db?sslmode=disable"
+      TENANT_TEST_REDIS_URL: redis://redis:6379/15
+    depends_on: {tenant-migrate: {condition: service_completed_successfully}, redis: {condition: service_healthy}}
+    networks: [private]
+  barber-integration-test:
+    profiles: ["test"]
+    build: {context: ., dockerfile: services/barber-service/Dockerfile, target: build}
+    working_dir: /workspace/services/barber-service
+    command: ["sh", "-c", "GOWORK=off go test ./internal/repository ./internal/handler -run Integration -count=1"]
+    environment:
+      BARBER_TEST_DATABASE_URL: "postgresql://barber_db_app:${BARBER_DB_APP_PASSWORD:-barber-app-dev-password}@postgres:5432/barber_db?sslmode=disable"
+      BARBER_TEST_OWNER_DATABASE_URL: "postgresql://barber_db_migrator:${BARBER_DB_OWNER_PASSWORD:-barber-owner-dev-password}@postgres:5432/barber_db?sslmode=disable"
+    depends_on: {barber-migrate: {condition: service_completed_successfully}}
+    networks: [private]
+  catalog-integration-test:
+    profiles: ["test"]
+    build: {context: ., dockerfile: services/catalog-service/Dockerfile, target: build}
+    working_dir: /workspace/services/catalog-service
+    command: ["sh", "-c", "GOWORK=off go test ./internal/repository ./internal/handler -run Integration -count=1"]
+    environment:
+      CATALOG_TEST_DATABASE_URL: "postgresql://catalog_db_app:${CATALOG_DB_APP_PASSWORD:-catalog-app-dev-password}@postgres:5432/catalog_db?sslmode=disable"
+      CATALOG_TEST_OWNER_DATABASE_URL: "postgresql://catalog_db_migrator:${CATALOG_DB_OWNER_PASSWORD:-catalog-owner-dev-password}@postgres:5432/catalog_db?sslmode=disable"
+    depends_on: {catalog-migrate: {condition: service_completed_successfully}}
+    networks: [private]
+  scheduling-integration-test:
+    profiles: ["test"]
+    build: {context: ., dockerfile: services/scheduling-service/Dockerfile, target: build}
+    working_dir: /workspace/services/scheduling-service
+    command: ["sh", "-c", "GOWORK=off go test ./internal/repository ./internal/handler -run Integration -count=1"]
+    environment:
+      SCHEDULING_TEST_DATABASE_URL: "postgresql://scheduling_db_app:${SCHEDULING_DB_APP_PASSWORD:-scheduling-app-dev-password}@postgres:5432/scheduling_db?sslmode=disable"
+      SCHEDULING_TEST_OWNER_DATABASE_URL: "postgresql://scheduling_db_migrator:${SCHEDULING_DB_OWNER_PASSWORD:-scheduling-owner-dev-password}@postgres:5432/scheduling_db?sslmode=disable"
+    depends_on: {scheduling-migrate: {condition: service_completed_successfully}}
+    networks: [private]
+  appointment-integration-test:
+    profiles: ["test"]
+    build: {context: ., dockerfile: services/appointment-service/Dockerfile, target: build}
+    working_dir: /workspace/services/appointment-service
+    command: ["sh", "-c", "GOWORK=off go test ./internal/repository ./internal/handler -run Integration -count=1"]
+    environment:
+      APPOINTMENT_TEST_DATABASE_URL: "postgresql://appointment_db_app:${APPOINTMENT_DB_APP_PASSWORD:-appointment-app-dev-password}@postgres:5432/appointment_db?sslmode=disable"
+      APPOINTMENT_TEST_OWNER_DATABASE_URL: "postgresql://appointment_db_migrator:${APPOINTMENT_DB_OWNER_PASSWORD:-appointment-owner-dev-password}@postgres:5432/appointment_db?sslmode=disable"
+    depends_on: {appointment-migrate: {condition: service_completed_successfully}}
+    networks: [private]
+  notification-integration-test:
+    profiles: ["test"]
+    build: {context: ., dockerfile: services/notification-service/Dockerfile, target: build}
+    working_dir: /workspace/services/notification-service
+    command: ["sh", "-c", "GOWORK=off go test -p 1 ./internal/repository ./internal/consumer ./internal/worker -run Integration -count=1"]
+    environment:
+      NOTIFICATION_TEST_DATABASE_URL: "postgresql://notification_db_app:${NOTIFICATION_DB_APP_PASSWORD:-notification-app-dev-password}@postgres:5432/notification_db?sslmode=disable"
+      NOTIFICATION_TEST_OWNER_DATABASE_URL: "postgresql://notification_db_migrator:${NOTIFICATION_DB_OWNER_PASSWORD:-notification-owner-dev-password}@postgres:5432/notification_db?sslmode=disable"
+      NOTIFICATION_TEST_NATS_URL: nats://nats:4222
+    depends_on: {notification-migrate: {condition: service_completed_successfully}, nats: {condition: service_healthy}}
+    networks: [private]
+  barber-service:
+    build: {context: ., dockerfile: services/barber-service/Dockerfile}
+    environment:
+      DATABASE_URL: "postgresql://barber_db_app:${BARBER_DB_APP_PASSWORD:-barber-app-dev-password}@postgres:5432/barber_db?sslmode=disable"
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-replace-with-a-long-development-secret}
+      AUTH_SERVICE_URL: http://auth-service:8080
+    depends_on: {barber-migrate: {condition: service_completed_successfully}}
+    healthcheck: *app-healthcheck
+    networks: [private]
+  catalog-service:
+    build: {context: ., dockerfile: services/catalog-service/Dockerfile}
+    environment:
+      DATABASE_URL: "postgresql://catalog_db_app:${CATALOG_DB_APP_PASSWORD:-catalog-app-dev-password}@postgres:5432/catalog_db?sslmode=disable"
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-replace-with-a-long-development-secret}
+      AUTH_SERVICE_URL: http://auth-service:8080
+      BARBER_SERVICE_URL: http://barber-service:8080
+    depends_on: {catalog-migrate: {condition: service_completed_successfully}}
+    healthcheck: *app-healthcheck
+    networks: [private]
+  scheduling-service:
+    build: {context: ., dockerfile: services/scheduling-service/Dockerfile}
+    environment:
+      DATABASE_URL: "postgresql://scheduling_db_app:${SCHEDULING_DB_APP_PASSWORD:-scheduling-app-dev-password}@postgres:5432/scheduling_db?sslmode=disable"
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-replace-with-a-long-development-secret}
+      AUTH_SERVICE_URL: http://auth-service:8080
+      BARBER_SERVICE_URL: http://barber-service:8080
+      CATALOG_SERVICE_URL: http://catalog-service:8080
+      TENANT_SERVICE_URL: http://tenant-service:8080
+      APPOINTMENT_SERVICE_URL: http://appointment-service:8080
+      BOOKING_INTERVAL_MINUTES: ${BOOKING_INTERVAL_MINUTES:-15}
+    depends_on: {scheduling-migrate: {condition: service_completed_successfully}}
+    healthcheck: *app-healthcheck
+    networks: [private]
+  appointment-service:
+    build: {context: ., dockerfile: services/appointment-service/Dockerfile}
+    environment:
+      DATABASE_URL: "postgresql://appointment_db_app:${APPOINTMENT_DB_APP_PASSWORD:-appointment-app-dev-password}@postgres:5432/appointment_db?sslmode=disable"
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-replace-with-a-long-development-secret}
+      AUTH_SERVICE_URL: http://auth-service:8080
+      BARBER_SERVICE_URL: http://barber-service:8080
+      CATALOG_SERVICE_URL: http://catalog-service:8080
+      TENANT_SERVICE_URL: http://tenant-service:8080
+      SCHEDULING_SERVICE_URL: http://scheduling-service:8080
+      CUSTOMER_SERVICE_URL: http://customer-service:8080
+      NATS_URL: nats://nats:4222
+    depends_on: {appointment-migrate: {condition: service_completed_successfully}}
+    healthcheck: *app-healthcheck
+    networks: [private]
+  customer-service:
+    build: {context: ., dockerfile: services/customer-service/Dockerfile}
+    environment:
+      DATABASE_URL: "postgresql://customer_db_app:${CUSTOMER_DB_APP_PASSWORD:-customer-app-dev-password}@postgres:5432/customer_db?sslmode=disable"
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-log}
+      EMAIL_FROM: ${EMAIL_FROM:-no-reply@barber.local}
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-replace-with-a-long-development-secret}
+      APPOINTMENT_SERVICE_URL: http://appointment-service:8080
+      APP_ENV: ${APP_ENV:-development}
+    depends_on: {customer-seed: {condition: service_completed_successfully}}
+    healthcheck: *app-healthcheck
+    networks: [private]
+  notification-service:
+    build: {context: ., dockerfile: services/notification-service/Dockerfile}
+    environment:
+      DATABASE_URL: "postgresql://notification_db_app:${NOTIFICATION_DB_APP_PASSWORD:-notification-app-dev-password}@postgres:5432/notification_db?sslmode=disable"
+      NATS_URL: "nats://nats:4222"
+      TENANT_SERVICE_URL: http://tenant-service:8080
+      APPOINTMENT_SERVICE_URL: http://appointment-service:8080
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-replace-with-a-long-development-secret}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-log}
+      EMAIL_FROM: ${EMAIL_FROM:-no-reply@barber.local}
+      APP_ENV: ${APP_ENV:-development}
+    depends_on: {nats: {condition: service_healthy}, notification-migrate: {condition: service_completed_successfully}}
+    healthcheck: *app-healthcheck
+    networks: [private]
+networks:
+  public: {}
+  private: {internal: true}
+volumes:
+  postgres_data: {}
+  redis_data: {}
+  nats_data: {}
