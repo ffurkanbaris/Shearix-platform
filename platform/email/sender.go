@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net"
 	"net/smtp"
 	"os"
@@ -27,6 +28,22 @@ type Sender interface {
 	Send(context.Context, Message) (Result, error)
 }
 
+// Backoff parameters for SendWithRetry's retry loop. Kept as unexported
+// constants rather than a configurable policy: callers all retry a
+// synchronous, in-request SMTP send with the same small attempt count (3),
+// so a single bounded default keeps the change minimal. Worst case across 3
+// attempts is retryBaseDelay + 2*retryBaseDelay = 600ms of added latency
+// (well under the ~5-6s budget), since the last attempt never sleeps.
+const (
+	retryBaseDelay = 200 * time.Millisecond
+	retryMaxDelay  = 2 * time.Second
+)
+
+// SendWithRetry retries sender.Send while the error is temporary, waiting a
+// bounded, jittered exponential backoff between attempts so a flaky
+// downstream provider isn't hammered in a tight loop. It remains a
+// synchronous, in-request call: this is not a background/async retry
+// mechanism, so the total added delay is deliberately kept small.
 func SendWithRetry(ctx context.Context, sender Sender, message Message, attempts int) (Result, error) {
 	if attempts < 1 {
 		attempts = 1
@@ -41,8 +58,46 @@ func SendWithRetry(ctx context.Context, sender Sender, message Message, attempts
 		if ctx.Err() != nil {
 			return Result{}, ctx.Err()
 		}
+		if attempt == attempts-1 {
+			break
+		}
+		if waitErr := sleepBackoff(ctx, attempt); waitErr != nil {
+			return Result{}, waitErr
+		}
 	}
 	return result, err
+}
+
+// sleepBackoff blocks for a bounded, full-jitter exponential backoff before
+// the next retry attempt (attempt is the 0-indexed attempt that just
+// failed). It returns promptly with ctx.Err() if the context is cancelled
+// during the wait, so a cancelled request never blocks on the sleep.
+func sleepBackoff(ctx context.Context, attempt int) error {
+	delay := retryBaseDelay << uint(attempt)
+	if delay > retryMaxDelay || delay <= 0 {
+		delay = retryMaxDelay
+	}
+	jittered := time.Duration(rand.Int63n(int64(delay) + 1)) // full jitter: [0, delay]
+	return backoffWait(ctx, jittered)
+}
+
+// backoffWait actually performs the wait for sleepBackoff. It is a package
+// variable so tests can substitute a fast, deterministic stand-in instead of
+// sleeping in real time; production code always uses realBackoffWait.
+var backoffWait = realBackoffWait
+
+func realBackoffWait(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 type TemporaryError struct{ Err error }

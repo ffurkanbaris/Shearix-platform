@@ -2,8 +2,11 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -15,6 +18,13 @@ import (
 	"github.com/gofiber/fiber/v3"
 )
 
+// DefaultOutboundTimeout is used whenever New is called with a non-positive
+// outboundTimeout (in particular, the zero value from callers that don't
+// care). See services/gateway-service/internal/config for the environment
+// variable (GATEWAY_OUTBOUND_TIMEOUT_MS) that normally drives this in
+// production, and its rationale relative to the frontend proxy's own timeout.
+const DefaultOutboundTimeout = 9 * time.Second
+
 type Handler struct {
 	resolver                                                                                                      service.Resolver
 	tenantURL, authURL, barberURL, catalogURL, schedulingURL, appointmentURL, notificationURL, customerURL, token string
@@ -23,7 +33,7 @@ type Handler struct {
 	client                                                                                                        *http.Client
 }
 
-func New(resolver service.Resolver, tenantURL, authURL, barberURL, catalogURL, schedulingURL, appointmentURL, notificationURL, customerURL, token, platformAdminToken string, frontendURLs ...string) Handler {
+func New(resolver service.Resolver, tenantURL, authURL, barberURL, catalogURL, schedulingURL, appointmentURL, notificationURL, customerURL, token, platformAdminToken string, outboundTimeout time.Duration, frontendURLs ...string) Handler {
 	adminWebURL, bookingWebURL := "http://admin-web:3000", "http://booking-web:3000"
 	if len(frontendURLs) > 0 && frontendURLs[0] != "" {
 		adminWebURL = frontendURLs[0]
@@ -31,7 +41,37 @@ func New(resolver service.Resolver, tenantURL, authURL, barberURL, catalogURL, s
 	if len(frontendURLs) > 1 && frontendURLs[1] != "" {
 		bookingWebURL = frontendURLs[1]
 	}
-	return Handler{resolver: resolver, tenantURL: strings.TrimRight(tenantURL, "/"), authURL: strings.TrimRight(authURL, "/"), barberURL: strings.TrimRight(barberURL, "/"), catalogURL: strings.TrimRight(catalogURL, "/"), schedulingURL: strings.TrimRight(schedulingURL, "/"), appointmentURL: strings.TrimRight(appointmentURL, "/"), notificationURL: strings.TrimRight(notificationURL, "/"), customerURL: strings.TrimRight(customerURL, "/"), adminWebURL: strings.TrimRight(adminWebURL, "/"), bookingWebURL: strings.TrimRight(bookingWebURL, "/"), token: token, platformAuth: platformauth.NewTokenVerifier(platformAdminToken), client: &http.Client{Timeout: 3 * time.Second}}
+	if outboundTimeout <= 0 {
+		outboundTimeout = DefaultOutboundTimeout
+	}
+	return Handler{resolver: resolver, tenantURL: strings.TrimRight(tenantURL, "/"), authURL: strings.TrimRight(authURL, "/"), barberURL: strings.TrimRight(barberURL, "/"), catalogURL: strings.TrimRight(catalogURL, "/"), schedulingURL: strings.TrimRight(schedulingURL, "/"), appointmentURL: strings.TrimRight(appointmentURL, "/"), notificationURL: strings.TrimRight(notificationURL, "/"), customerURL: strings.TrimRight(customerURL, "/"), adminWebURL: strings.TrimRight(adminWebURL, "/"), bookingWebURL: strings.TrimRight(bookingWebURL, "/"), token: token, platformAuth: platformauth.NewTokenVerifier(platformAdminToken), client: &http.Client{Timeout: outboundTimeout}}
+}
+
+// isTimeout reports whether err represents the outbound HTTP client's own
+// timeout firing (context deadline exceeded while waiting on the backend),
+// as opposed to a connection-level failure such as connection refused or a
+// DNS lookup failure. http.Client wraps timeout errors in a *url.Error whose
+// Timeout() method returns true; errors.As unwraps to find it.
+func isTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+// upstreamError maps a failed h.client.Do call to a distinct, clear response:
+// a timed-out backend is reported as 504 with a JSON body identifying the
+// timeout, while any other network failure (connection refused, DNS
+// failure, and similar) is reported as 502 with a JSON body identifying it
+// as an unavailable upstream. The two failure modes never share a status
+// code or body shape, so callers (and the frontend proxy's own timeout
+// handling) can always tell them apart.
+func upstreamError(c fiber.Ctx, err error) error {
+	if isTimeout(err) {
+		return c.Status(fiber.StatusGatewayTimeout).JSON(fiber.Map{"error": "gateway_timeout", "message": "The upstream service did not respond in time."})
+	}
+	return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "gateway_unavailable", "message": "The upstream service is unavailable."})
 }
 func (h Handler) Register(app *fiber.App) {
 	// Meta callbacks are public but do not resolve a hostname or add internal
@@ -78,7 +118,7 @@ func (h Handler) platformProxy(path string) fiber.Handler {
 		request.Header.Set("Content-Type", c.Get("Content-Type"))
 		response, err := h.client.Do(request)
 		if err != nil {
-			return c.SendStatus(fiber.StatusBadGateway)
+			return upstreamError(c, err)
 		}
 		defer response.Body.Close()
 		body, err := io.ReadAll(response.Body)
@@ -112,7 +152,7 @@ func (h Handler) config(c fiber.Ctx) error {
 	request.Header.Set(tenantctx.RequestIDHeader, c.Get(tenantctx.RequestIDHeader))
 	response, err := h.client.Do(request)
 	if err != nil {
-		return c.SendStatus(fiber.StatusBadGateway)
+		return upstreamError(c, err)
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(response.Body)
@@ -149,7 +189,7 @@ func (h Handler) auth(path string) fiber.Handler {
 		}
 		response, err := h.client.Do(request)
 		if err != nil {
-			return c.SendStatus(fiber.StatusBadGateway)
+			return upstreamError(c, err)
 		}
 		defer response.Body.Close()
 		body, err := io.ReadAll(response.Body)
@@ -227,7 +267,7 @@ func (h Handler) proxy(base, path, appType string) fiber.Handler {
 		}
 		res, err := h.client.Do(req)
 		if err != nil {
-			return c.SendStatus(502)
+			return upstreamError(c, err)
 		}
 		defer res.Body.Close()
 		body, err := io.ReadAll(res.Body)
@@ -285,7 +325,7 @@ func (h Handler) frontend(c fiber.Ctx) error {
 	req.Host = c.Get("Host")
 	res, err := h.client.Do(req)
 	if err != nil {
-		return c.SendStatus(http.StatusBadGateway)
+		return upstreamError(c, err)
 	}
 	defer res.Body.Close()
 	for _, header := range []string{"Content-Type", "Cache-Control", "Location", "Vary"} {

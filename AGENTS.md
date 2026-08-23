@@ -706,9 +706,7 @@ Consumes appointment events.
 
 Responsibilities:
 
-- SMS
 - email
-- WhatsApp
 - appointment confirmations
 - cancellations
 - reminders
@@ -726,7 +724,7 @@ NATS
        ↓
 notification-service
        ↓
-SMS / Email / WhatsApp
+Email
 ```
 
 ## Redis

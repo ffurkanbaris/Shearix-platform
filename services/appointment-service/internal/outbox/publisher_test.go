@@ -14,6 +14,7 @@ import (
 	"github.com/barber-appointment/platform/infra"
 	"github.com/google/uuid"
 	server "github.com/nats-io/nats-server/v2/server"
+	"github.com/nats-io/nats.go"
 )
 
 func TestStartIsIdempotentAndShutdownIsBounded(t *testing.T) {
@@ -96,6 +97,78 @@ func TestPublisherRecoversAcrossNATSAvailability(t *testing.T) {
 	defer ns.Shutdown()
 	waitFor(t, 8*time.Second, func() bool { return publisher.Ready() && repo.count() == 2 })
 	publisher.Close()
+}
+
+// staticOutbox always re-offers the same single event from ClaimOutbox and
+// never removes it, regardless of MarkOutboxPublished outcome. This models
+// the ambiguous "publish succeeded but the DB ack/mark-published step
+// failed" window: the outbox row gets reclaimed and republished on the next
+// cycle even though a JetStream message for it already exists.
+type staticOutbox struct {
+	event domain.OutboxEvent
+	marks int32
+}
+
+func (s *staticOutbox) ClaimOutbox(context.Context, int) ([]domain.OutboxEvent, error) {
+	return []domain.OutboxEvent{s.event}, nil
+}
+func (s *staticOutbox) MarkOutboxPublished(context.Context, uuid.UUID) error {
+	s.marks++
+	return nil
+}
+func (s *staticOutbox) ReleaseOutbox(context.Context, uuid.UUID) error { return nil }
+func (s *staticOutbox) CleanupRetention(context.Context, int) (int, int, error) {
+	return 0, 0, nil
+}
+
+// TestPublishDeduplicatesRepublishedEvent exercises the same-event-published-
+// twice ambiguity directly: it forces two publishBatch cycles over the exact
+// same outbox event (as would happen if MarkOutboxPublished failed after a
+// successful publish) and asserts JetStream's server-side MsgId dedup window
+// collapses them into a single stream message rather than two.
+func TestPublishDeduplicatesRepublishedEvent(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	_ = listener.Close()
+	url := "nats://127.0.0.1:" + strconv.Itoa(port)
+	ns := runServer(t, port)
+	defer ns.Shutdown()
+
+	nc, err := infra.ConnectNATS(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+
+	repo := &staticOutbox{event: domain.OutboxEvent{
+		ID: uuid.New(), TenantID: uuid.New(), AggregateID: uuid.New(),
+		Type: "appointment.created", Payload: []byte(`{}`), OccurredAt: time.Now(),
+	}}
+	publisher, err := New(repo, nc, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if !publisher.ensureReady(ctx) {
+		t.Fatal("publisher did not become ready against a running NATS server")
+	}
+
+	publisher.publishBatch(ctx)
+	publisher.publishBatch(ctx)
+
+	if repo.marks != 2 {
+		t.Fatalf("expected both publish attempts to be reported successful, marks=%d", repo.marks)
+	}
+	info, err := publisher.js.StreamInfo("APPOINTMENTS", nats.Context(ctx))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.State.Msgs != 1 {
+		t.Fatalf("expected JetStream dedup to collapse the republished event into 1 message, got %d", info.State.Msgs)
+	}
 }
 
 func runServer(t *testing.T, port int) *server.Server {

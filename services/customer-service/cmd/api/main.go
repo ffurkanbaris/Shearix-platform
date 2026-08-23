@@ -9,9 +9,11 @@ import (
 	platformdb "github.com/barber-appointment/platform/db"
 	platformemail "github.com/barber-appointment/platform/email"
 	"github.com/barber-appointment/platform/httpx"
+	"github.com/barber-appointment/platform/infra"
 	"github.com/barber-appointment/platform/internalauth"
 	"github.com/barber-appointment/platform/logging"
 	"github.com/barber-appointment/platform/migrate"
+	"github.com/barber-appointment/platform/ratelimit"
 	"github.com/gofiber/fiber/v3"
 	"log"
 	"os"
@@ -35,6 +37,16 @@ func main() {
 		log.Fatal(err)
 	}
 	defer pool.Close()
+	if cfg.RedisURL == "" {
+		log.Fatal("REDIS_URL is required")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	redisClient, err := infra.ConnectRedis(ctx, cfg.RedisURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer redisClient.Close()
 	logger := logging.New(cfg.ServiceName)
 	sender, err := platformemail.FromEnvironment(logger)
 	if err != nil {
@@ -42,8 +54,13 @@ func main() {
 	}
 	app := fiber.New()
 	app.Use(httpx.RequestID())
-	httpx.Health(app, func() error { return platformdb.Ready(pool) })
-	handler.New(repository.New(pool), internalauth.NewTokenVerifier(cfg.InternalAuthToken), sender, cfg.InternalAuthToken, env("APPOINTMENT_SERVICE_URL", "http://appointment-service:8080")).Register(app)
+	httpx.Health(app, func() error {
+		if err := platformdb.Ready(pool); err != nil {
+			return err
+		}
+		return infra.RedisReady(redisClient)
+	})
+	handler.New(repository.New(pool), internalauth.NewTokenVerifier(cfg.InternalAuthToken), sender, cfg.InternalAuthToken, env("APPOINTMENT_SERVICE_URL", "http://appointment-service:8080"), ratelimit.NewRedis(redisClient)).Register(app)
 	if err := httpx.Run(app, cfg.Port, logger); err != nil {
 		log.Fatal(err)
 	}

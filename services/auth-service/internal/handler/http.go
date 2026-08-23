@@ -21,15 +21,33 @@ type rateLimiter interface {
 	Allow(context.Context, string, int, time.Duration) (bool, error)
 }
 
+// authService is the subset of service.Service the handler depends on. It
+// exists so tests can substitute a fake implementation instead of a live
+// database-backed service.Service; production wiring passes a real
+// service.Service, which satisfies this interface implicitly.
+type authService interface {
+	Login(context.Context, uuid.UUID, domain.LoginInput) (domain.Session, error)
+	Register(context.Context, uuid.UUID, domain.Principal, domain.RegisterInput) (domain.Registration, error)
+	Members(context.Context, uuid.UUID) ([]domain.Member, error)
+	Member(context.Context, uuid.UUID, uuid.UUID) (domain.Member, error)
+	ChangeMemberRole(context.Context, uuid.UUID, domain.Principal, uuid.UUID, domain.Role) (domain.Member, error)
+	SetMemberStatus(context.Context, uuid.UUID, domain.Principal, uuid.UUID, bool) (domain.Member, error)
+	BarberEligible(context.Context, uuid.UUID, uuid.UUID) (bool, error)
+	ChangePassword(context.Context, uuid.UUID, domain.Principal, domain.ChangePasswordInput) error
+	ForgotPassword(context.Context, uuid.UUID, domain.ForgotPasswordInput) error
+	Current(context.Context, uuid.UUID, string) (domain.Principal, error)
+	Logout(context.Context, uuid.UUID, string) error
+}
+
 type Handler struct {
-	service      service.Service
+	service      authService
 	auth         internalauth.Verifier
 	cookieName   string
 	cookieSecure bool
 	limiter      rateLimiter
 }
 
-func New(service service.Service, auth internalauth.Verifier, cookieName string, cookieSecure bool, limiters ...rateLimiter) Handler {
+func New(service authService, auth internalauth.Verifier, cookieName string, cookieSecure bool, limiters ...rateLimiter) Handler {
 	handler := Handler{service: service, auth: auth, cookieName: cookieName, cookieSecure: cookieSecure}
 	if len(limiters) > 0 {
 		handler.limiter = limiters[0]
@@ -43,13 +61,19 @@ func (h Handler) Register(app *fiber.App) {
 	app.Get("/internal/v1/auth/me", h.Authenticate(), h.me)
 	// OWNER alone administers tenant memberships. MANAGER has no implicit
 	// identity/role-management authority.
-	app.Post("/internal/v1/auth/register", h.Authenticate(), RequireRoles(domain.RoleOwner), h.register)
-	app.Get("/internal/v1/auth/members", h.Authenticate(), RequireRoles(domain.RoleOwner), h.members)
-	app.Get("/internal/v1/auth/members/:id", h.Authenticate(), RequireRoles(domain.RoleOwner), h.member)
-	app.Post("/internal/v1/auth/members", h.Authenticate(), RequireRoles(domain.RoleOwner), h.register)
-	app.Patch("/internal/v1/auth/members/:id/role", h.Authenticate(), RequireRoles(domain.RoleOwner), h.changeMemberRole)
-	app.Post("/internal/v1/auth/members/:id/activate", h.Authenticate(), RequireRoles(domain.RoleOwner), h.activateMember)
-	app.Post("/internal/v1/auth/members/:id/deactivate", h.Authenticate(), RequireRoles(domain.RoleOwner), h.deactivateMember)
+	//
+	// RequireCurrentPassword is inserted after Authenticate on every
+	// privileged member-management route so an OWNER mid forced-password-reset
+	// cannot create staff or grant roles before completing the reset. It is
+	// deliberately absent from /me, /change-password (the escape hatch), and
+	// /logout, which must stay reachable to a pending-reset session.
+	app.Post("/internal/v1/auth/register", h.Authenticate(), RequireCurrentPassword(), RequireRoles(domain.RoleOwner), h.register)
+	app.Get("/internal/v1/auth/members", h.Authenticate(), RequireCurrentPassword(), RequireRoles(domain.RoleOwner), h.members)
+	app.Get("/internal/v1/auth/members/:id", h.Authenticate(), RequireCurrentPassword(), RequireRoles(domain.RoleOwner), h.member)
+	app.Post("/internal/v1/auth/members", h.Authenticate(), RequireCurrentPassword(), RequireRoles(domain.RoleOwner), h.register)
+	app.Patch("/internal/v1/auth/members/:id/role", h.Authenticate(), RequireCurrentPassword(), RequireRoles(domain.RoleOwner), h.changeMemberRole)
+	app.Post("/internal/v1/auth/members/:id/activate", h.Authenticate(), RequireCurrentPassword(), RequireRoles(domain.RoleOwner), h.activateMember)
+	app.Post("/internal/v1/auth/members/:id/deactivate", h.Authenticate(), RequireCurrentPassword(), RequireRoles(domain.RoleOwner), h.deactivateMember)
 	app.Get("/internal/v1/auth/members/:id/barber-eligibility", h.barberEligibility)
 	app.Post("/internal/v1/auth/change-password", h.Authenticate(), h.changePassword)
 	app.Post("/internal/v1/auth/forgot-password", h.forgotPassword)
@@ -333,6 +357,25 @@ func (h Handler) setCookie(c fiber.Ctx, value string, expiresAt time.Time) {
 }
 func (h Handler) clearCookie(c fiber.Ctx) {
 	c.Cookie(&fiber.Cookie{Name: h.cookieName, Value: "", Path: "/", HTTPOnly: true, Secure: h.cookieSecure, SameSite: "Strict", Expires: time.Unix(0, 0), MaxAge: -1})
+}
+
+// RequireCurrentPassword blocks privileged operations for a principal whose
+// password change is still pending, mirroring the must_change_password gate
+// platform/adminauth.Client.Authenticate enforces for every other service.
+// It must run after Authenticate (which populates principalKey) and must be
+// omitted from routes that need to remain reachable during a forced reset:
+// /me, /change-password, and /logout.
+func RequireCurrentPassword() fiber.Handler {
+	return func(c fiber.Ctx) error {
+		principal, ok := c.Locals(principalKey).(domain.Principal)
+		if !ok {
+			return c.SendStatus(fiber.StatusUnauthorized)
+		}
+		if principal.MustChangePassword {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "password change required"})
+		}
+		return c.Next()
+	}
 }
 
 func RequireRoles(allowed ...domain.Role) fiber.Handler {

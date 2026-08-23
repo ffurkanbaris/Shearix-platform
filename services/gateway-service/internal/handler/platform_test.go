@@ -30,7 +30,7 @@ func TestPlatformRoutesRequireSeparateCredentialAndStripTenantContext(t *testing
 	defer backend.Close()
 
 	app := fiber.New()
-	New(service.Resolver{}, backend.URL, "", "", "", "", "", "", "", "internal-secret", "platform-secret").Register(app)
+	New(service.Resolver{}, backend.URL, "", "", "", "", "", "", "", "internal-secret", "platform-secret", 0).Register(app)
 
 	unauthorized := httptest.NewRequest(http.MethodPost, "/api/v1/platform/tenants", nil)
 	if response, err := app.Test(unauthorized); err != nil || response.StatusCode != http.StatusUnauthorized {
@@ -78,7 +78,7 @@ func TestPublicRouteClassesReplaceEverySpoofedTrustedHeader(t *testing.T) {
 	defer resolverBackend.Close()
 	resolver = service.NewResolver(resolverBackend.URL, "internal-secret")
 	app := fiber.New()
-	New(resolver, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, "internal-secret", "platform-secret").Register(app)
+	New(resolver, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, "internal-secret", "platform-secret", 0).Register(app)
 
 	for _, path := range []string{
 		"/api/v1/public/customer/auth/me", "/api/v1/public/branches", "/api/v1/public/services", "/api/v1/public/availability", "/api/v1/public/appointments/00000000-0000-0000-0000-000000000099",
@@ -118,7 +118,7 @@ func TestHostnameResolutionIsAuthoritativeAndWrongAppTypeIsRejected(t *testing.T
 	}))
 	defer resolverBackend.Close()
 	app := fiber.New()
-	New(service.NewResolver(resolverBackend.URL, "internal-secret"), resolverBackend.URL, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, "internal-secret", "platform-secret").Register(app)
+	New(service.NewResolver(resolverBackend.URL, "internal-secret"), resolverBackend.URL, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, "internal-secret", "platform-secret", 0).Register(app)
 
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/public/branches?tenant_id="+tenantB, nil)
 	request.Host = "booking.localhost"
@@ -167,7 +167,7 @@ func TestGatewayDoesNotRegisterPrivateServiceRoutes(t *testing.T) {
 	frontend := httptest.NewServer(http.NotFoundHandler())
 	defer frontend.Close()
 	app := fiber.New()
-	New(service.NewResolver(resolverBackend.URL, "internal-secret"), resolverBackend.URL, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, "internal-secret", "platform-secret", frontend.URL, frontend.URL).Register(app)
+	New(service.NewResolver(resolverBackend.URL, "internal-secret"), resolverBackend.URL, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, "internal-secret", "platform-secret", 0, frontend.URL, frontend.URL).Register(app)
 
 	for _, path := range []string{
 		"/internal/v1/occupancy", "/internal/v1/admin/barbers", "/internal/v1/admin/services", "/internal/v1/admin/barbers/id/schedule", "/internal/v1/internal/customer/session",

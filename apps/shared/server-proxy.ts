@@ -1,3 +1,10 @@
+// GATEWAY_REQUEST_TIMEOUT_MS (default 10s below) must stay slightly above the
+// gateway service's own outbound timeout (GATEWAY_OUTBOUND_TIMEOUT_MS,
+// default 9s - see services/gateway-service/internal/config) so the gateway's
+// 504 on a slow backend is reached before this proxy's own timeout races it.
+// If this default is lowered, lower the gateway's default with it so it stays
+// comfortably below this value; the two are independently configurable but
+// meant to be tuned together.
 export type ProxyConfig = { gatewayURL: string; timeoutMs: number; maxResponseBytes: number; maxRequestBytes: number };
 
 const requestHeaders = ["accept", "accept-language", "content-type", "cookie", "idempotency-key", "if-match", "if-none-match"];

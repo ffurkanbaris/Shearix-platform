@@ -45,7 +45,7 @@ func TestFrontendDispatchesByResolvedDomainType(t *testing.T) {
 	defer booking.Close()
 
 	app := fiber.New()
-	New(service.NewResolver(resolverBackend.URL, "internal"), resolverBackend.URL, "", "", "", "", "", "", "", "internal", "platform", admin.URL, booking.URL).Register(app)
+	New(service.NewResolver(resolverBackend.URL, "internal"), resolverBackend.URL, "", "", "", "", "", "", "", "internal", "platform", 0, admin.URL, booking.URL).Register(app)
 	for _, test := range []struct{ host, want string }{{"panel.example", "admin-page"}, {"booking.example", "booking-page"}} {
 		request := httptest.NewRequest(http.MethodGet, "/", nil)
 		request.Host = test.host

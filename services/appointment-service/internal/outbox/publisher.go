@@ -117,7 +117,13 @@ func (p *Publisher) publishBatch(ctx context.Context) {
 			Payload      json.RawMessage `json:"payload"`
 		}{event.ID.String(), event.Type, 1, event.TenantID.String(), event.AggregateID.String(), event.OccurredAt.UTC(), event.Payload})
 		if err == nil {
-			_, err = p.js.Publish("appointments.v1."+event.Type, envelope, nats.Context(ctx))
+			// MsgId enables JetStream's server-side publish dedup window so a
+			// double-publish of the same logical event (e.g. publish succeeds
+			// but MarkOutboxPublished fails, and the row is reclaimed and
+			// republished next cycle) is absorbed by the broker instead of
+			// producing two distinct stream messages. The outbox event's own
+			// durable UUID is a stable, per-event identity for this purpose.
+			_, err = p.js.Publish("appointments.v1."+event.Type, envelope, nats.Context(ctx), nats.MsgId(event.ID.String()))
 		}
 		if err != nil {
 			p.ready.Store(false)

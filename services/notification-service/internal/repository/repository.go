@@ -26,6 +26,29 @@ func (r Repository) Plan(ctx context.Context, tenant uuid.UUID, event domain.Env
 	})
 	return created, err
 }
+
+// terminalRecipientPlaceholder marks a Fail() audit row: it is never a real
+// delivery destination, just a satisfaction of email_notifications' NOT NULL
+// recipient_email column for a message that could not be delivered at all
+// (e.g. because its actual recipient could never be resolved).
+const terminalRecipientPlaceholder = "undeliverable@notification-service.invalid"
+
+// Fail persists an auditable terminal record for an event that JetStream has
+// stopped redelivering (MaxDeliver exhausted, message Term()'d). It reuses
+// the same (tenant_id,event_id,notification_type) identity as Plan so a
+// terminal failure for an event that was never successfully planned is still
+// visible for operator investigation, without disturbing a row that already
+// reached a final state such as 'sent' or 'cancelled'.
+func (r Repository) Fail(ctx context.Context, tenant uuid.UUID, event domain.Envelope, kind, template, language, reason string) error {
+	return db.WithTenantTx(ctx, r.pool, tenant, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO public.email_notifications(tenant_id,event_id,appointment_id,notification_type,recipient_email,template_name,template_language,status,last_error,scheduled_at,next_attempt_at)
+			VALUES($1,$2,$3,$4,$5,$6,$7,'failed',$8,clock_timestamp(),clock_timestamp())
+			ON CONFLICT(tenant_id,event_id,notification_type) DO UPDATE SET status='failed',last_error=EXCLUDED.last_error,updated_at=clock_timestamp()
+			WHERE public.email_notifications.status NOT IN('sent','cancelled')`,
+			tenant, event.EventID, event.AggregateID, kind, terminalRecipientPlaceholder, template, language, reason)
+		return err
+	})
+}
 func (r Repository) CancelReminders(ctx context.Context, tenant, appointment uuid.UUID) error {
 	return db.WithTenantTx(ctx, r.pool, tenant, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `UPDATE public.email_notifications SET status='cancelled',updated_at=clock_timestamp() WHERE tenant_id=$1 AND appointment_id=$2 AND notification_type='appointment_reminder' AND status='pending'`, tenant, appointment)

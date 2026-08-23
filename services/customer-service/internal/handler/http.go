@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/barber-appointment/customer-service/internal/application"
@@ -26,14 +27,28 @@ func sessionCookieName() string {
 	return cookieName
 }
 
+// rateLimiter mirrors auth-service's minimal limiter interface. It is
+// redefined here (rather than importing auth-service's internal package)
+// because services must not import each other's internal packages; the
+// shape matches platform/ratelimit.Redis.Allow so ratelimit.NewRedis(...)
+// satisfies it directly.
+type rateLimiter interface {
+	Allow(context.Context, string, int, time.Duration) (bool, error)
+}
+
 type Handler struct {
 	app           application.Service
 	Verify        internalauth.Verifier
 	InternalToken string
+	limiter       rateLimiter
 }
 
-func New(r repository.Repository, v internalauth.Verifier, sender platformemail.Sender, token, appointmentURL string) Handler {
-	return Handler{application.New(r, sender, customerclient.NewAppointments(appointmentURL, token)), v, token}
+func New(r repository.Repository, v internalauth.Verifier, sender platformemail.Sender, token, appointmentURL string, limiters ...rateLimiter) Handler {
+	h := Handler{app: application.New(r, sender, customerclient.NewAppointments(appointmentURL, token)), Verify: v, InternalToken: token}
+	if len(limiters) > 0 {
+		h.limiter = limiters[0]
+	}
+	return h
 }
 func (h Handler) Register(a *fiber.App) {
 	a.Post("/internal/v1/public/customer/auth/register", h.register)
@@ -77,10 +92,26 @@ func appError(c fiber.Ctx, err error) error {
 		return c.SendStatus(500)
 	}
 }
+
+// limited applies a fixed-window limit of 10 requests per minute per
+// tenant+operation, matching auth-service's "auth-rate:" pattern. A nil
+// limiter (no limiter configured) fails closed, same as auth-service.
+func (h Handler) limited(c fiber.Ctx, tenant tenantctx.Context, operation string) (bool, error) {
+	if h.limiter == nil {
+		return false, nil
+	}
+	return h.limiter.Allow(c.Context(), "customer-rate:"+tenant.TenantID.String()+":"+operation, 10, time.Minute)
+}
+
 func (h Handler) register(c fiber.Ctx) error {
 	t, err := h.tenant(c)
 	if err != nil {
 		return c.SendStatus(403)
+	}
+	if allowed, err := h.limited(c, t, "register"); err != nil {
+		return c.SendStatus(503)
+	} else if !allowed {
+		return c.SendStatus(429)
 	}
 	var in application.Registration
 	if json.Unmarshal(c.Body(), &in) != nil {
@@ -100,6 +131,11 @@ func (h Handler) login(c fiber.Ctx) error {
 	t, err := h.tenant(c)
 	if err != nil {
 		return c.SendStatus(403)
+	}
+	if allowed, err := h.limited(c, t, "login"); err != nil {
+		return c.SendStatus(503)
+	} else if !allowed {
+		return c.SendStatus(429)
 	}
 	var in struct {
 		Email    string `json:"email"`
@@ -195,6 +231,14 @@ func (h Handler) forgot(c fiber.Ctx) error {
 	t, err := h.tenant(c)
 	if err != nil {
 		return c.SendStatus(403)
+	}
+	// Rate limiting is keyed by tenant+operation only, never by the
+	// requested email, so it adds no signal that distinguishes existing
+	// from non-existing accounts.
+	if allowed, err := h.limited(c, t, "forgot-password"); err != nil {
+		return c.SendStatus(503)
+	} else if !allowed {
+		return c.SendStatus(429)
 	}
 	var in struct {
 		Email string `json:"email"`

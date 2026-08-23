@@ -24,7 +24,7 @@ func main() {
 	app := fiber.New()
 	app.Use(httpx.RequestID())
 	httpx.Health(app, func() error { return resolver.Ready(context.Background()) })
-	handler.New(resolver, cfg.TenantServiceURL, cfg.AuthServiceURL, cfg.BarberServiceURL, cfg.CatalogServiceURL, cfg.SchedulingServiceURL, cfg.AppointmentServiceURL, cfg.NotificationServiceURL, cfg.CustomerServiceURL, cfg.InternalAuthToken, cfg.PlatformAdminToken, cfg.AdminWebURL, cfg.BookingWebURL).Register(app)
+	handler.New(resolver, cfg.TenantServiceURL, cfg.AuthServiceURL, cfg.BarberServiceURL, cfg.CatalogServiceURL, cfg.SchedulingServiceURL, cfg.AppointmentServiceURL, cfg.NotificationServiceURL, cfg.CustomerServiceURL, cfg.InternalAuthToken, cfg.PlatformAdminToken, cfg.OutboundTimeout, cfg.AdminWebURL, cfg.BookingWebURL).Register(app)
 	if err := httpx.Run(app, cfg.Port, logging.New(cfg.ServiceName)); err != nil {
 		os.Exit(1)
 	}
