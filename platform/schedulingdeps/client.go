@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/barber-appointment/platform/internalauth"
+	"github.com/barber-appointment/platform/otelsetup"
 	"github.com/barber-appointment/platform/tenantctx"
 	"github.com/google/uuid"
 	"net/http"
@@ -27,7 +28,7 @@ type Client struct {
 }
 
 func New(barberURL, catalogURL, tenantURL, token string) Client {
-	return Client{strings.TrimRight(barberURL, "/"), strings.TrimRight(catalogURL, "/"), strings.TrimRight(tenantURL, "/"), token, &http.Client{Timeout: 3 * time.Second}}
+	return Client{strings.TrimRight(barberURL, "/"), strings.TrimRight(catalogURL, "/"), strings.TrimRight(tenantURL, "/"), token, &http.Client{Timeout: 3 * time.Second, Transport: otelsetup.WrapTransport(nil)}}
 }
 
 // InternalToken is used only by another private HTTP adapter. It is sourced

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/barber-appointment/platform/internalauth"
+	"github.com/barber-appointment/platform/otelsetup"
 	"github.com/barber-appointment/platform/tenantctx"
 	"github.com/google/uuid"
 )
@@ -21,7 +22,7 @@ type Client struct {
 }
 
 func New(baseURL, token string) Client {
-	return Client{baseURL: strings.TrimRight(baseURL, "/"), token: token, http: &http.Client{Timeout: 3 * time.Second}}
+	return Client{baseURL: strings.TrimRight(baseURL, "/"), token: token, http: &http.Client{Timeout: 3 * time.Second, Transport: otelsetup.WrapTransport(nil)}}
 }
 
 func (c Client) EnsureExists(ctx context.Context, tenant tenantctx.Context, barberID uuid.UUID) error {
