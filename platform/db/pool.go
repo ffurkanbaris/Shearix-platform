@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -47,7 +48,23 @@ func PoolConfigFromEnvironment() (PoolConfig, error) {
 	return c, nil
 }
 
-func OpenPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
+// PoolOption customizes pool construction beyond the environment-driven
+// PoolConfig. Currently only used to attach an optional OpenTelemetry query
+// tracer; safe to leave unset (nil tracer means no tracing overhead).
+type PoolOption func(*pgxpool.Config)
+
+// WithTracer attaches a pgx.QueryTracer (see platform/otelsetup.PGXTracer)
+// to every connection the pool opens. Passing a nil tracer is a no-op, so
+// callers can pass it unconditionally even when tracing is disabled.
+func WithTracer(tracer pgx.QueryTracer) PoolOption {
+	return func(c *pgxpool.Config) {
+		if tracer != nil {
+			c.ConnConfig.Tracer = tracer
+		}
+	}
+}
+
+func OpenPool(ctx context.Context, databaseURL string, opts ...PoolOption) (*pgxpool.Pool, error) {
 	if databaseURL == "" {
 		return nil, errors.New("DATABASE_URL is required")
 	}
@@ -65,6 +82,9 @@ func OpenPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	parsed.MaxConnIdleTime = settings.MaxConnIdleTime
 	parsed.HealthCheckPeriod = settings.HealthCheckPeriod
 	parsed.ConnConfig.ConnectTimeout = settings.ConnectTimeout
+	for _, opt := range opts {
+		opt(parsed)
+	}
 	connectCtx, cancel := context.WithTimeout(ctx, settings.ConnectTimeout)
 	defer cancel()
 	pool, err := pgxpool.NewWithConfig(connectCtx, parsed)
