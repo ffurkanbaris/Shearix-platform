@@ -62,6 +62,27 @@ func (s *timeoutSender) Send(ctx context.Context, _ platformemail.Message) (plat
 	return platformemail.Result{}, ctx.Err()
 }
 
+// tenantScopedRepo adapts repository.Repository to worker's
+// notificationRepository interface via ClaimForTenant instead of the global,
+// cross-tenant Claim the production worker actually calls. This keeps these
+// scripted-sender assertions (which depend on exact call counts/order)
+// deterministic when other integration test packages are concurrently
+// planning/claiming their own, unrelated rows against this same shared
+// database - without serializing the test binary. worker.go and its
+// production Claim path are unchanged; only this test's own repository
+// access is scoped.
+type tenantScopedRepo struct {
+	repo   repository.Repository
+	tenant uuid.UUID
+}
+
+func (r tenantScopedRepo) Claim(ctx context.Context, limit int) ([]domain.Notification, error) {
+	return r.repo.ClaimForTenant(ctx, r.tenant, limit)
+}
+func (r tenantScopedRepo) Finish(ctx context.Context, id, claim uuid.UUID, messageID, problem string, retryAt *time.Time) error {
+	return r.repo.Finish(ctx, id, claim, messageID, problem, retryAt)
+}
+
 func TestNotificationProviderReliabilityIntegration(t *testing.T) {
 	appDSN, ownerDSN := os.Getenv("NOTIFICATION_TEST_DATABASE_URL"), os.Getenv("NOTIFICATION_TEST_OWNER_DATABASE_URL")
 	if appDSN == "" || ownerDSN == "" {
@@ -119,7 +140,7 @@ func TestNotificationProviderReliabilityIntegration(t *testing.T) {
 			platformemail.TemporaryError{Err: errors.New("provider detail two")},
 		}, message: "final-provider-message"}
 		registry := prometheus.NewRegistry()
-		w := worker.New(repo, sender, logger).WithObservability(registry)
+		w := worker.New(tenantScopedRepo{repo, tenant}, sender, logger).WithObservability(registry)
 		w.Once(ctx)
 		makeDue(id)
 		w.Once(ctx)
@@ -145,7 +166,7 @@ func TestNotificationProviderReliabilityIntegration(t *testing.T) {
 		id := plan()
 		sender := &scriptedSender{errors: []error{errors.New("secret provider diagnostic")}}
 		registry := prometheus.NewRegistry()
-		worker.New(repo, sender, logger).WithObservability(registry).Once(ctx)
+		worker.New(tenantScopedRepo{repo, tenant}, sender, logger).WithObservability(registry).Once(ctx)
 		status, attempts, problem, messageID := state(id)
 		if sender.calls != 1 || status != "failed" || attempts != 1 || problem != "email delivery failed" || messageID != nil {
 			t.Fatalf("calls=%d status=%s attempts=%d problem=%q message=%v", sender.calls, status, attempts, problem, messageID)
@@ -162,7 +183,7 @@ func TestNotificationProviderReliabilityIntegration(t *testing.T) {
 		id := plan()
 		sender := &timeoutSender{}
 		started := time.Now()
-		worker.NewWithTimeout(repo, sender, logger, 25*time.Millisecond).Once(ctx)
+		worker.NewWithTimeout(tenantScopedRepo{repo, tenant}, sender, logger, 25*time.Millisecond).Once(ctx)
 		if elapsed := time.Since(started); elapsed > time.Second {
 			t.Fatalf("provider timeout was not bounded: %s", elapsed)
 		}

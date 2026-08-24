@@ -56,7 +56,24 @@ func (r Repository) CancelReminders(ctx context.Context, tenant, appointment uui
 	})
 }
 func (r Repository) Claim(ctx context.Context, limit int) ([]domain.Notification, error) {
-	rows, err := r.pool.Query(ctx, `SELECT id,tenant_id,appointment_id,notification_type,recipient_email,template_name,template_language,attempt_count,claim_token,recovered FROM public.claim_email_notifications($1)`, limit)
+	return r.claim(ctx, `SELECT id,tenant_id,appointment_id,notification_type,recipient_email,template_name,template_language,attempt_count,claim_token,recovered FROM public.claim_email_notifications($1)`, limit)
+}
+
+// ClaimForTenant claims only rows belonging to tenant, using the same
+// FOR UPDATE SKIP LOCKED batching, lease-expiry reclaim, and claim-token
+// fencing as Claim (both are backed by the same underlying SQL logic - see
+// migration 000009). The production worker never calls this: its single
+// background loop always processes the full cross-tenant backlog via Claim,
+// which is the correct design for one shared delivery worker. This exists so
+// a caller that must not observe or interfere with other tenants' rows -
+// currently, integration tests sharing one live database with other test
+// packages - can do so safely.
+func (r Repository) ClaimForTenant(ctx context.Context, tenant uuid.UUID, limit int) ([]domain.Notification, error) {
+	return r.claim(ctx, `SELECT id,tenant_id,appointment_id,notification_type,recipient_email,template_name,template_language,attempt_count,claim_token,recovered FROM public.claim_email_notifications_for_tenant($1,$2)`, limit, tenant)
+}
+
+func (r Repository) claim(ctx context.Context, query string, args ...any) ([]domain.Notification, error) {
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

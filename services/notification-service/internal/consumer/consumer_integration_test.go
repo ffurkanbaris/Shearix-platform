@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -127,10 +128,20 @@ func TestJetStreamPlanningIntegration(t *testing.T) {
 		var n int
 		return owner.QueryRow(ctx, `SELECT count(*) FROM public.email_notifications WHERE tenant_id=$1 AND event_id=$2 AND notification_type='appointment_created'`, tenant, eventID).Scan(&n) == nil && n == 1
 	})
+	// The "appointment_created" and "appointment_reminder" rows are planned
+	// by two separate inserts within the same handle() call, not one atomic
+	// statement, so the reminder row can become visible a moment after the
+	// created row above does - this is always true, but only actually
+	// observable under real database load (e.g. another integration test
+	// package concurrently exercising claim/finish against this same shared
+	// database). Poll instead of asserting on a single point-in-time read.
 	var reminders, pastReminders int
 	var scheduledAt time.Time
-	if err = owner.QueryRow(ctx, `SELECT count(*),count(*) FILTER (WHERE scheduled_at<=clock_timestamp()),max(scheduled_at) FROM public.email_notifications WHERE tenant_id=$1 AND appointment_id=$2 AND notification_type='appointment_reminder'`, tenant, appointment).Scan(&reminders, &pastReminders, &scheduledAt); err != nil || reminders != 1 || pastReminders != 0 {
-		t.Fatalf("reminder scheduling reminders=%d past=%d err=%v", reminders, pastReminders, err)
+	waitFor(t, 7*time.Second, func() bool {
+		return owner.QueryRow(ctx, `SELECT count(*),count(*) FILTER (WHERE scheduled_at<=clock_timestamp()),max(scheduled_at) FROM public.email_notifications WHERE tenant_id=$1 AND appointment_id=$2 AND notification_type='appointment_reminder'`, tenant, appointment).Scan(&reminders, &pastReminders, &scheduledAt) == nil && reminders == 1
+	})
+	if pastReminders != 0 {
+		t.Fatalf("reminder scheduling reminders=%d past=%d", reminders, pastReminders)
 	}
 	if want := payloadStart(payload).Add(-3 * time.Hour); scheduledAt.Sub(want) < -time.Second || scheduledAt.Sub(want) > time.Second {
 		t.Fatalf("tenant reminder offset was not used: scheduled=%s want=%s", scheduledAt, want)
@@ -181,12 +192,25 @@ func TestJetStreamPlanningIntegration(t *testing.T) {
 		return when.Sub(secondStart.Add(-90*time.Minute)) >= -time.Second && when.Sub(secondStart.Add(-90*time.Minute)) <= time.Second
 	})
 
-	// A persistence failure must leave the message unacknowledged. Revoke only
-	// in this isolated test and always restore the application grant.
-	if _, err = owner.Exec(ctx, `REVOKE INSERT ON public.email_notifications FROM notification_db_app`); err != nil {
+	// A persistence failure must leave the message unacknowledged. This used
+	// to REVOKE INSERT on the table from notification_db_app - but that is a
+	// role-wide privilege, not scoped to this test's own connection or rows,
+	// so it also broke every *other* concurrently-running integration test
+	// package's INSERTs (via Plan) for the several real seconds the revoke
+	// was in effect, once these tests stopped running serialized (-p 1). A
+	// trigger that only rejects rows for this test's own tenant reproduces
+	// the same "persistence failure" behavior at the consumer/Nak layer
+	// without affecting any other tenant's concurrent inserts.
+	if _, err = owner.Exec(ctx, fmt.Sprintf(`CREATE OR REPLACE FUNCTION public.__test_reject_tenant() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN IF NEW.tenant_id='%s' THEN RAISE EXCEPTION 'simulated persistence failure'; END IF; RETURN NEW; END $$`, tenant)); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _, _ = owner.Exec(ctx, `GRANT INSERT ON public.email_notifications TO notification_db_app`) }()
+	if _, err = owner.Exec(ctx, `CREATE TRIGGER __test_reject_tenant_trigger BEFORE INSERT ON public.email_notifications FOR EACH ROW EXECUTE FUNCTION public.__test_reject_tenant()`); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = owner.Exec(ctx, `DROP TRIGGER IF EXISTS __test_reject_tenant_trigger ON public.email_notifications`)
+	}()
 	beforeFailure, err := js.ConsumerInfo(stream, durable)
 	if err != nil {
 		t.Fatal(err)

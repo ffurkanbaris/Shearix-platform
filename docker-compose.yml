@@ -285,7 +285,7 @@ services:
     profiles: ["test"]
     build: {context: ., dockerfile: services/notification-service/Dockerfile, target: build}
     working_dir: /workspace/services/notification-service
-    command: ["sh", "-c", "GOWORK=off go test -p 1 ./internal/repository ./internal/consumer ./internal/worker -run Integration -count=1"]
+    command: ["sh", "-c", "GOWORK=off go test ./internal/repository ./internal/consumer ./internal/worker -run Integration -count=1"]
     environment:
       NOTIFICATION_TEST_DATABASE_URL: "postgresql://notification_db_app:${NOTIFICATION_DB_APP_PASSWORD:-notification-app-dev-password}@postgres:5432/notification_db?sslmode=disable"
       NOTIFICATION_TEST_OWNER_DATABASE_URL: "postgresql://notification_db_migrator:${NOTIFICATION_DB_OWNER_PASSWORD:-notification-owner-dev-password}@postgres:5432/notification_db?sslmode=disable"
