@@ -3,3 +3,6 @@
 .vscode/
 coverage.out
 bin/
+node_modules/
+.next/
+*.tsbuildinfo

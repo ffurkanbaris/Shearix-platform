@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/barber-appointment/customer-service/internal/application"
 	"github.com/barber-appointment/platform/internalauth"
+	"github.com/barber-appointment/platform/otelsetup"
 	"github.com/barber-appointment/platform/tenantctx"
 	"github.com/google/uuid"
 	"io"
@@ -19,7 +20,7 @@ type Appointments struct {
 }
 
 func NewAppointments(baseURL, token string) Appointments {
-	return Appointments{strings.TrimRight(baseURL, "/"), token, &http.Client{Timeout: 3 * time.Second}}
+	return Appointments{strings.TrimRight(baseURL, "/"), token, &http.Client{Timeout: 3 * time.Second, Transport: otelsetup.WrapTransport(nil)}}
 }
 func (a Appointments) Forward(ctx context.Context, t tenantctx.Context, customer uuid.UUID, method, path, rawQuery string) (application.ForwardResult, error) {
 	target := a.baseURL + "/internal/v1/customer/appointments" + path

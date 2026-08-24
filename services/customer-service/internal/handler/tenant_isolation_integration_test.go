@@ -61,7 +61,7 @@ func TestCustomerHTTPSessionTenantIsolationIntegration(t *testing.T) {
 
 	const internalToken = "test-internal-token"
 	app := fiber.New()
-	handler.New(repo, internalauth.NewTokenVerifier(internalToken), nil, internalToken, "http://unused").Register(app)
+	handler.New(repo, internalauth.NewTokenVerifier(internalToken), nil, internalToken, "http://unused", nil).Register(app)
 	request := func(tenantID uuid.UUID, path string, session string) *http.Response {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.Header.Set(internalauth.HeaderName, internalToken)

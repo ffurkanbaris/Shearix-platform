@@ -10,6 +10,19 @@ export type ProxyConfig = { gatewayURL: string; timeoutMs: number; maxResponseBy
 const requestHeaders = ["accept", "accept-language", "content-type", "cookie", "idempotency-key", "if-match", "if-none-match"];
 const responseHeaders = ["content-type", "cache-control", "location", "retry-after", "vary"];
 
+// Mirrors platform/httpx.isBoundedToken on the Go side: a caller-supplied
+// X-Request-ID is only ever forwarded when it is a short, safe token — never
+// unbounded, never containing characters that could inject a header or break
+// log/metric formatting downstream. An invalid or absent value always gets a
+// freshly generated one instead of being dropped silently.
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+
+function resolveRequestID(source: Headers): string {
+  const supplied = source.get("x-request-id");
+  if (supplied && REQUEST_ID_PATTERN.test(supplied)) return supplied;
+  return crypto.randomUUID();
+}
+
 function positive(value: string | undefined, fallback: number, name: string, maximum: number): number {
   if (value === undefined || value === "") return fallback;
   if (!/^\d+$/.test(value)) throw new Error(`${name} must be a positive integer`);
@@ -98,23 +111,35 @@ function fetchPreservingHost(url: URL, init: RequestInit): Promise<Response> {
 }
 
 export async function proxyGateway(request: Request, path: string[], transport: ProxyTransport = fetchPreservingHost): Promise<Response> {
-  let config: ProxyConfig; try { config = proxyConfig(); } catch { return proxyError(500, "proxy_configuration", "The service is temporarily unavailable."); }
+  // Resolved once, up front, so every possible return path below — success,
+  // every error branch, even the pre-flight config/size checks — carries the
+  // exact same X-Request-ID. This is the one value the gateway's own
+  // httpx.RequestID() will see and preserve (rather than generating its own),
+  // giving true browser-to-backend correlation end to end.
+  const requestId = resolveRequestID(request.headers);
+  const withRequestID = (response: Response): Response => {
+    response.headers.set("x-request-id", requestId);
+    return response;
+  };
+
+  let config: ProxyConfig; try { config = proxyConfig(); } catch { return withRequestID(proxyError(500, "proxy_configuration", "The service is temporarily unavailable.")); }
   const url = new URL(`/api/${path.map(encodeURIComponent).join("/")}`, config.gatewayURL); url.search = new URL(request.url).search;
-  const declared = Number(request.headers.get("content-length")); if (Number.isFinite(declared) && declared > config.maxRequestBytes) return proxyError(413, "request_too_large", "The request is too large.");
+  const declared = Number(request.headers.get("content-length")); if (Number.isFinite(declared) && declared > config.maxRequestBytes) return withRequestID(proxyError(413, "request_too_large", "The request is too large."));
   const timeout = new AbortController(); const timer = setTimeout(() => timeout.abort(), config.timeoutMs); const signal = AbortSignal.any([request.signal, timeout.signal]);
   try {
     const method = request.method.toUpperCase(); const requestBody = method === "GET" || method === "HEAD" ? undefined : await boundedRequestBody(request, config.maxRequestBytes);
-    const upstream = await transport(url, { method, headers: proxyRequestHeaders(request.headers), body: requestBody, signal });
+    const outboundHeaders = proxyRequestHeaders(request.headers); outboundHeaders.set("x-request-id", requestId);
+    const upstream = await transport(url, { method, headers: outboundHeaders, body: requestBody, signal });
     const responseBody = await boundedBody(upstream, config.maxResponseBytes); const headers = allowedResponseHeaders(upstream);
-    if ([204, 205, 304].includes(upstream.status)) return new Response(null, { status: upstream.status, headers });
+    if ([204, 205, 304].includes(upstream.status)) return withRequestID(new Response(null, { status: upstream.status, headers }));
     const responseData = responseBody.buffer.slice(responseBody.byteOffset, responseBody.byteOffset + responseBody.byteLength) as ArrayBuffer;
-    return new Response(responseData, { status: upstream.status, headers });
+    return withRequestID(new Response(responseData, { status: upstream.status, headers }));
   } catch (error) {
-    if (timeout.signal.aborted) return proxyError(504, "gateway_timeout", "The service is taking too long to respond. Please try again.");
-    if (request.signal.aborted) return proxyError(499, "request_cancelled", "The request was cancelled.");
-    if (error instanceof Error && error.message === "request_too_large") return proxyError(413, "request_too_large", "The request is too large.");
-    if (error instanceof Error && error.message === "response_too_large") return proxyError(502, "gateway_response_too_large", "The service returned an invalid response.");
-    return proxyError(502, "gateway_unavailable", "The service is temporarily unavailable. Please try again.");
+    if (timeout.signal.aborted) return withRequestID(proxyError(504, "gateway_timeout", "The service is taking too long to respond. Please try again."));
+    if (request.signal.aborted) return withRequestID(proxyError(499, "request_cancelled", "The request was cancelled."));
+    if (error instanceof Error && error.message === "request_too_large") return withRequestID(proxyError(413, "request_too_large", "The request is too large."));
+    if (error instanceof Error && error.message === "response_too_large") return withRequestID(proxyError(502, "gateway_response_too_large", "The service returned an invalid response."));
+    return withRequestID(proxyError(502, "gateway_unavailable", "The service is temporarily unavailable. Please try again."));
   } finally { clearTimeout(timer); }
 }
 import { request as httpRequest } from "node:http";

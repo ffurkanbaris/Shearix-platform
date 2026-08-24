@@ -85,7 +85,7 @@ func TestCredentialDeliveryFailureIntegration(t *testing.T) {
 
 	failing := &testSender{err: errors.New("provider unavailable")}
 	app := fiber.New()
-	New(repo, internalauth.NewTokenVerifier(token), failing, token, "http://unused", newFakeLimiter(time.Minute)).Register(app)
+	New(repo, internalauth.NewTokenVerifier(token), failing, token, "http://unused", nil, newFakeLimiter(time.Minute)).Register(app)
 	response := request(t, app, token, tenantID, "/internal/v1/public/customer/auth/register", `{"name":"Delivery Failure","email":"failed@example.test"}`)
 	if response.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("failed registration status = %d", response.StatusCode)
@@ -107,7 +107,7 @@ func TestCredentialDeliveryFailureIntegration(t *testing.T) {
 
 	blocking := &testSender{entered: make(chan struct{}, 1), release: make(chan struct{})}
 	concurrentApp := fiber.New()
-	New(repo, internalauth.NewTokenVerifier(token), blocking, token, "http://unused", newFakeLimiter(time.Minute)).Register(concurrentApp)
+	New(repo, internalauth.NewTokenVerifier(token), blocking, token, "http://unused", nil, newFakeLimiter(time.Minute)).Register(concurrentApp)
 	firstDone := make(chan *http.Response, 1)
 	go func() {
 		firstDone <- request(t, concurrentApp, token, tenantID, "/internal/v1/public/customer/auth/register", `{"name":"Delivery Failure","email":"failed@example.test"}`)
@@ -127,7 +127,7 @@ func TestCredentialDeliveryFailureIntegration(t *testing.T) {
 
 	success := &testSender{}
 	successApp := fiber.New()
-	New(repo, internalauth.NewTokenVerifier(token), success, token, "http://unused", newFakeLimiter(time.Minute)).Register(successApp)
+	New(repo, internalauth.NewTokenVerifier(token), success, token, "http://unused", nil, newFakeLimiter(time.Minute)).Register(successApp)
 	response = request(t, successApp, token, tenantID, "/internal/v1/public/customer/auth/register", `{"name":"Reset Failure","email":"reset@example.test"}`)
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("setup registration status = %d", response.StatusCode)
@@ -194,7 +194,7 @@ func TestCredentialDeliveryFailureIntegration(t *testing.T) {
 
 	resetFailure := &testSender{err: errors.New("provider unavailable")}
 	resetApp := fiber.New()
-	New(repo, internalauth.NewTokenVerifier(token), resetFailure, token, "http://unused", newFakeLimiter(time.Minute)).Register(resetApp)
+	New(repo, internalauth.NewTokenVerifier(token), resetFailure, token, "http://unused", nil, newFakeLimiter(time.Minute)).Register(resetApp)
 	response = request(t, resetApp, token, tenantID, "/internal/v1/public/customer/auth/forgot-password", `{"email":"reset@example.test"}`)
 	if response.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("failed reset status = %d", response.StatusCode)

@@ -7,6 +7,8 @@ import (
 	"github.com/barber-appointment/auth-service/internal/handler"
 	"github.com/barber-appointment/auth-service/internal/repository"
 	"github.com/barber-appointment/auth-service/internal/service"
+	"github.com/barber-appointment/platform/obsmetrics"
+	"github.com/barber-appointment/platform/otelsetup"
 	platformdb "github.com/barber-appointment/platform/db"
 	platformemail "github.com/barber-appointment/platform/email"
 	"github.com/barber-appointment/platform/httpx"
@@ -33,11 +35,16 @@ func main() {
 	if err := cfg.ServiceConfig.Validate(); err != nil {
 		log.Fatal(err)
 	}
-	pool, err := platformdb.OpenPool(context.Background(), cfg.DatabaseURL)
+	logger := logging.New(cfg.ServiceName)
+	tracer, shutdown := otelsetup.Init(context.Background(), cfg.ServiceName, logger)
+	defer shutdown(context.Background())
+	metrics := obsmetrics.New(cfg.ServiceName)
+	pool, err := platformdb.OpenPool(context.Background(), cfg.DatabaseURL, platformdb.WithTracer(otelsetup.PGXTracer(tracer)))
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer pool.Close()
+	metrics.RegisterPgxPool(pool)
 	if cfg.RedisURL == "" {
 		log.Fatal("REDIS_URL is required")
 	}
@@ -48,7 +55,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer redisClient.Close()
-	logger := logging.New(cfg.ServiceName)
+	metrics.RegisterRedis(redisClient)
 	emailSender, err := platformemail.FromEnvironment(logger)
 	if err != nil {
 		log.Fatal(err)
@@ -56,16 +63,24 @@ func main() {
 	authService := service.New(repository.New(pool), cfg.SessionTTL, emailSender)
 	app := fiber.New()
 	app.Use(httpx.RequestID())
+	app.Use(otelsetup.Middleware(tracer))
+	app.Use(logging.HTTPCompletionMiddleware(logger))
+	app.Use(metrics.HTTPMiddleware())
+	app.Get("/metrics", metrics.Handler())
 	httpx.Health(app, func() error {
-		if err := platformdb.Ready(pool); err != nil {
-			return err
+		dbErr := platformdb.Ready(pool)
+		metrics.SetDependencyUp("postgres", dbErr == nil)
+		if dbErr != nil {
+			return dbErr
 		}
-		if err := infra.RedisReady(redisClient); err != nil {
-			return err
+		redisErr := infra.RedisReady(redisClient)
+		metrics.SetDependencyUp("redis", redisErr == nil)
+		if redisErr != nil {
+			return redisErr
 		}
 		return nil
 	})
-	handler.New(authService, internalauth.NewTokenVerifier(cfg.InternalAuthToken), cfg.CookieName, cfg.CookieSecure, ratelimit.NewRedis(redisClient)).Register(app)
+	handler.New(authService, internalauth.NewTokenVerifier(cfg.InternalAuthToken), cfg.CookieName, cfg.CookieSecure, metrics, ratelimit.NewRedis(redisClient)).Register(app)
 	if err := httpx.Run(app, cfg.Port, logger); err != nil {
 		log.Fatal(err)
 	}

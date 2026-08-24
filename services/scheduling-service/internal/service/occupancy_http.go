@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/barber-appointment/platform/internalauth"
+	"github.com/barber-appointment/platform/otelsetup"
 	"github.com/barber-appointment/platform/tenantctx"
 	"github.com/barber-appointment/scheduling-service/internal/domain"
 	"github.com/google/uuid"
@@ -27,7 +28,7 @@ type HTTPOccupancy struct {
 }
 
 func NewHTTPOccupancy(baseURL, token string) HTTPOccupancy {
-	return HTTPOccupancy{baseURL: strings.TrimRight(baseURL, "/"), token: token, client: &http.Client{Timeout: 3 * time.Second}}
+	return HTTPOccupancy{baseURL: strings.TrimRight(baseURL, "/"), token: token, client: &http.Client{Timeout: 3 * time.Second, Transport: otelsetup.WrapTransport(nil)}}
 }
 
 func (p HTTPOccupancy) Occupied(ctx context.Context, tenant tenantctx.Context, barberID uuid.UUID, from, to time.Time) ([]domain.BlockedPeriod, error) {

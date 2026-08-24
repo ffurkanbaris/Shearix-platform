@@ -62,4 +62,46 @@ describe("gateway proxy", () => {
   it("rejects invalid bounded configuration", () => {
     expect(() => proxyConfig({ GATEWAY_REQUEST_TIMEOUT_MS: "0" })).toThrow(); expect(() => proxyConfig({ GATEWAY_MAX_RESPONSE_BYTES: "invalid" })).toThrow();
   });
+  it("generates an X-Request-ID when the caller sends none, forwards it to the gateway, and returns it", async () => {
+    const upstream = vi.fn().mockResolvedValue(new Response("{}", { headers: { "content-type": "application/json" } }));
+    const response = await proxyGateway(new Request("http://tenant.test/api/v1/public/config"), ["v1", "public", "config"], upstream);
+    const [, init] = upstream.mock.calls[0] as [URL, RequestInit];
+    const forwarded = (init.headers as Headers).get("x-request-id");
+    expect(forwarded).toBeTruthy();
+    expect(response.headers.get("x-request-id")).toBe(forwarded);
+  });
+  it("forwards and echoes back a valid caller-supplied X-Request-ID unchanged", async () => {
+    const upstream = vi.fn().mockResolvedValue(new Response("{}", { headers: { "content-type": "application/json" } }));
+    const response = await proxyGateway(new Request("http://tenant.test/api/v1/public/config", { headers: { "x-request-id": "caller-supplied-id-123" } }), ["v1", "public", "config"], upstream);
+    const [, init] = upstream.mock.calls[0] as [URL, RequestInit];
+    expect((init.headers as Headers).get("x-request-id")).toBe("caller-supplied-id-123");
+    expect(response.headers.get("x-request-id")).toBe("caller-supplied-id-123");
+  });
+  it("replaces an oversized or hostile caller-supplied X-Request-ID with a freshly generated one", async () => {
+    // A literal CRLF header-injection value ("id\r\nX-Injected: evil") is
+    // excluded here: the Web Headers API itself already refuses to
+    // construct a Request carrying it (throws at Request() time), so that
+    // specific case can never reach resolveRequestID via a real request —
+    // matching the equivalent finding on the Go side (platform/httpx). This
+    // exercises the other class of hostile input the pattern must still
+    // reject on its own: oversized and disallowed-character values.
+    const upstream = vi.fn().mockResolvedValue(new Response("{}", { headers: { "content-type": "application/json" } }));
+    const hostile = "a".repeat(200);
+    const response = await proxyGateway(new Request("http://tenant.test/api/v1/public/config", { headers: { "x-request-id": hostile } }), ["v1", "public", "config"], upstream);
+    const [, init] = upstream.mock.calls[0] as [URL, RequestInit];
+    const forwarded = (init.headers as Headers).get("x-request-id");
+    expect(forwarded).not.toBe(hostile);
+    expect(forwarded).toBeTruthy();
+    expect(response.headers.get("x-request-id")).toBe(forwarded);
+  });
+  it("still returns an X-Request-ID on error responses (timeout, cancellation, oversized)", async () => {
+    vi.stubEnv("GATEWAY_REQUEST_TIMEOUT_MS", "1");
+    global.fetch = vi.fn((...args: Parameters<typeof fetch>) => new Promise<Response>((_resolve, reject) => {
+      const init = args[1] ?? {};
+      (init.signal as AbortSignal).addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+    }));
+    const response = await proxyGateway(new Request("http://tenant.test/api/v1/public/config", { headers: { "x-request-id": "caller-supplied-id-456" } }), ["v1", "public", "config"], global.fetch);
+    expect(response.status).toBe(504);
+    expect(response.headers.get("x-request-id")).toBe("caller-supplied-id-456");
+  });
 });

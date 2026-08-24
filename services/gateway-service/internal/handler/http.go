@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/barber-appointment/gateway-service/internal/service"
+	"github.com/barber-appointment/platform/httpx"
 	"github.com/barber-appointment/platform/internalauth"
+	"github.com/barber-appointment/platform/otelsetup"
 	"github.com/barber-appointment/platform/platformauth"
 	"github.com/barber-appointment/platform/tenantctx"
 	"github.com/gofiber/fiber/v3"
@@ -44,7 +46,25 @@ func New(resolver service.Resolver, tenantURL, authURL, barberURL, catalogURL, s
 	if outboundTimeout <= 0 {
 		outboundTimeout = DefaultOutboundTimeout
 	}
-	return Handler{resolver: resolver, tenantURL: strings.TrimRight(tenantURL, "/"), authURL: strings.TrimRight(authURL, "/"), barberURL: strings.TrimRight(barberURL, "/"), catalogURL: strings.TrimRight(catalogURL, "/"), schedulingURL: strings.TrimRight(schedulingURL, "/"), appointmentURL: strings.TrimRight(appointmentURL, "/"), notificationURL: strings.TrimRight(notificationURL, "/"), customerURL: strings.TrimRight(customerURL, "/"), adminWebURL: strings.TrimRight(adminWebURL, "/"), bookingWebURL: strings.TrimRight(bookingWebURL, "/"), token: token, platformAuth: platformauth.NewTokenVerifier(platformAdminToken), client: &http.Client{Timeout: outboundTimeout}}
+	return Handler{resolver: resolver, tenantURL: strings.TrimRight(tenantURL, "/"), authURL: strings.TrimRight(authURL, "/"), barberURL: strings.TrimRight(barberURL, "/"), catalogURL: strings.TrimRight(catalogURL, "/"), schedulingURL: strings.TrimRight(schedulingURL, "/"), appointmentURL: strings.TrimRight(appointmentURL, "/"), notificationURL: strings.TrimRight(notificationURL, "/"), customerURL: strings.TrimRight(customerURL, "/"), adminWebURL: strings.TrimRight(adminWebURL, "/"), bookingWebURL: strings.TrimRight(bookingWebURL, "/"), token: token, platformAuth: platformauth.NewTokenVerifier(platformAdminToken), client: &http.Client{Timeout: outboundTimeout, Transport: otelsetup.WrapTransport(nil)}}
+}
+
+// requestID returns the single, final resolved request ID for this inbound
+// request: the value httpx.RequestID() computed (either the caller's own
+// validated X-Request-ID or a freshly generated one) and already returned on
+// the response header, as stored in c.Locals by that middleware. Every
+// outbound proxy call must forward this exact value — never a fresh read of
+// the inbound X-Request-ID header, which is empty whenever the caller sent
+// no header at all (the case httpx.RequestID() exists to paper over by
+// generating one). Falls back to the raw inbound header only when the
+// RequestID middleware was not installed in front of this handler (e.g. a
+// handler exercised directly in a test without the full app.Use chain), so
+// behavior degrades gracefully rather than silently dropping the header.
+func requestID(c fiber.Ctx) string {
+	if id, ok := c.Locals(httpx.RequestIDLocalsKey).(string); ok && id != "" {
+		return id
+	}
+	return c.Get(tenantctx.RequestIDHeader)
 }
 
 // isTimeout reports whether err represents the outbound HTTP client's own
@@ -114,7 +134,7 @@ func (h Handler) platformProxy(path string) fiber.Handler {
 		// The gateway derives the only trusted internal credential. Client
 		// supplied X-Internal-Token or tenant-context values are never copied.
 		request.Header.Set(internalauth.HeaderName, h.token)
-		request.Header.Set(tenantctx.RequestIDHeader, c.Get(tenantctx.RequestIDHeader))
+		request.Header.Set(tenantctx.RequestIDHeader, requestID(c))
 		request.Header.Set("Content-Type", c.Get("Content-Type"))
 		response, err := h.client.Do(request)
 		if err != nil {
@@ -149,7 +169,7 @@ func (h Handler) config(c fiber.Ctx) error {
 	request.Header.Set(internalauth.HeaderName, h.token)
 	request.Header.Set(tenantctx.TenantIDHeader, resolution.TenantID)
 	request.Header.Set(tenantctx.AppTypeHeader, resolution.AppType)
-	request.Header.Set(tenantctx.RequestIDHeader, c.Get(tenantctx.RequestIDHeader))
+	request.Header.Set(tenantctx.RequestIDHeader, requestID(c))
 	response, err := h.client.Do(request)
 	if err != nil {
 		return upstreamError(c, err)
@@ -182,7 +202,7 @@ func (h Handler) auth(path string) fiber.Handler {
 		request.Header.Set(internalauth.HeaderName, h.token)
 		request.Header.Set(tenantctx.TenantIDHeader, resolution.TenantID)
 		request.Header.Set(tenantctx.AppTypeHeader, resolution.AppType)
-		request.Header.Set(tenantctx.RequestIDHeader, c.Get(tenantctx.RequestIDHeader))
+		request.Header.Set(tenantctx.RequestIDHeader, requestID(c))
 		request.Header.Set("Content-Type", c.Get("Content-Type"))
 		if cookie := c.Get("Cookie"); cookie != "" {
 			request.Header.Set("Cookie", cookie)
@@ -228,7 +248,7 @@ func (h Handler) proxy(base, path, appType string) fiber.Handler {
 		req.Header.Set(internalauth.HeaderName, h.token)
 		req.Header.Set(tenantctx.TenantIDHeader, resolution.TenantID)
 		req.Header.Set(tenantctx.AppTypeHeader, resolution.AppType)
-		req.Header.Set(tenantctx.RequestIDHeader, c.Get(tenantctx.RequestIDHeader))
+		req.Header.Set(tenantctx.RequestIDHeader, requestID(c))
 		req.Header.Set("Content-Type", c.Get("Content-Type"))
 		if key := c.Get("Idempotency-Key"); key != "" {
 			req.Header.Set("Idempotency-Key", key)

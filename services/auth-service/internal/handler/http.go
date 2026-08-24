@@ -10,6 +10,7 @@ import (
 	"github.com/barber-appointment/auth-service/internal/repository"
 	"github.com/barber-appointment/auth-service/internal/service"
 	"github.com/barber-appointment/platform/internalauth"
+	"github.com/barber-appointment/platform/obsmetrics"
 	"github.com/barber-appointment/platform/tenantctx"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
@@ -45,10 +46,11 @@ type Handler struct {
 	cookieName   string
 	cookieSecure bool
 	limiter      rateLimiter
+	metrics      *obsmetrics.Registry
 }
 
-func New(service authService, auth internalauth.Verifier, cookieName string, cookieSecure bool, limiters ...rateLimiter) Handler {
-	handler := Handler{service: service, auth: auth, cookieName: cookieName, cookieSecure: cookieSecure}
+func New(service authService, auth internalauth.Verifier, cookieName string, cookieSecure bool, metrics *obsmetrics.Registry, limiters ...rateLimiter) Handler {
+	handler := Handler{service: service, auth: auth, cookieName: cookieName, cookieSecure: cookieSecure, metrics: metrics}
 	if len(limiters) > 0 {
 		handler.limiter = limiters[0]
 	}
@@ -349,7 +351,18 @@ func (h Handler) limited(c fiber.Ctx, tenant tenantctx.Context, operation string
 	}
 	// The gateway is the trust boundary. Tenant+operation limits avoid trusting
 	// arbitrary forwarded addresses while still bounding password abuse.
-	return h.limiter.Allow(c.Context(), "auth-rate:"+tenant.TenantID.String()+":"+operation, 10, time.Minute)
+	allowed, err := h.limiter.Allow(c.Context(), "auth-rate:"+tenant.TenantID.String()+":"+operation, 10, time.Minute)
+	if h.metrics != nil {
+		switch {
+		case err != nil:
+			h.metrics.RateLimitError(operation)
+		case allowed:
+			h.metrics.RateLimitAllowed(operation)
+		default:
+			h.metrics.RateLimitBlocked(operation)
+		}
+	}
+	return allowed, err
 }
 
 func (h Handler) setCookie(c fiber.Ctx, value string, expiresAt time.Time) {

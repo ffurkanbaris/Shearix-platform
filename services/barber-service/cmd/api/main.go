@@ -12,6 +12,8 @@ import (
 	"github.com/barber-appointment/platform/internalauth"
 	"github.com/barber-appointment/platform/logging"
 	"github.com/barber-appointment/platform/migrate"
+	"github.com/barber-appointment/platform/obsmetrics"
+	"github.com/barber-appointment/platform/otelsetup"
 	"github.com/gofiber/fiber/v3"
 	"log"
 	"os"
@@ -30,16 +32,29 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatal(err)
 	}
-	pool, err := platformdb.OpenPool(context.Background(), cfg.DatabaseURL)
+	logger := logging.New(cfg.ServiceName)
+	tracer, shutdown := otelsetup.Init(context.Background(), cfg.ServiceName, logger)
+	defer shutdown(context.Background())
+	metrics := obsmetrics.New(cfg.ServiceName)
+	pool, err := platformdb.OpenPool(context.Background(), cfg.DatabaseURL, platformdb.WithTracer(otelsetup.PGXTracer(tracer)))
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer pool.Close()
+	metrics.RegisterPgxPool(pool)
 	app := fiber.New()
 	app.Use(httpx.RequestID())
-	httpx.Health(app, func() error { return platformdb.Ready(pool) })
+	app.Use(otelsetup.Middleware(tracer))
+	app.Use(logging.HTTPCompletionMiddleware(logger))
+	app.Use(metrics.HTTPMiddleware())
+	httpx.Health(app, func() error {
+		err := platformdb.Ready(pool)
+		metrics.SetDependencyUp("postgres", err == nil)
+		return err
+	})
+	app.Get("/metrics", metrics.Handler())
 	handler.New(repository.New(pool), internalauth.NewTokenVerifier(cfg.InternalAuthToken), adminauth.New(env("AUTH_SERVICE_URL", "http://auth-service:8080"), cfg.InternalAuthToken)).Register(app)
-	if err := httpx.Run(app, cfg.Port, logging.New(cfg.ServiceName)); err != nil {
+	if err := httpx.Run(app, cfg.Port, logger); err != nil {
 		log.Fatal(err)
 	}
 }

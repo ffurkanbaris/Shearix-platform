@@ -82,7 +82,7 @@ func doLimited(t *testing.T, app *fiber.App, op string) *http.Response {
 // 1. Allowed requests: N requests within the limit succeed normally.
 func TestRateLimitAllowsRequestsWithinLimit(t *testing.T) {
 	limiter := newFakeLimiter(time.Minute)
-	h := New(repository.Repository{}, internalauth.NewTokenVerifier("t"), nil, "t", "http://unused", limiter)
+	h := New(repository.Repository{}, internalauth.NewTokenVerifier("t"), nil, "t", "http://unused", nil, limiter)
 	app := limitedTestApp(h)
 	for i := 0; i < 10; i++ {
 		res := doLimited(t, app, "login")
@@ -101,7 +101,7 @@ func TestRateLimitAllowsRequestsWithinLimit(t *testing.T) {
 // short-circuited before touching the database.
 func TestRateLimitBlocksRequestsOverLimit(t *testing.T) {
 	limiter := newFakeLimiter(time.Minute)
-	h := New(repository.Repository{}, internalauth.NewTokenVerifier("t"), nil, "t", "http://unused", limiter)
+	h := New(repository.Repository{}, internalauth.NewTokenVerifier("t"), nil, "t", "http://unused", nil, limiter)
 	app := limitedTestApp(h)
 	for i := 0; i < 10; i++ {
 		res := doLimited(t, app, "login")
@@ -123,7 +123,7 @@ func TestRateLimitBlocksRequestsOverLimit(t *testing.T) {
 	// without ever reaching the real login logic — an unpanicked 429 is
 	// itself proof the limiter short-circuited before touching the database.
 	realLimiter := newFakeLimiter(time.Minute)
-	real := New(repository.Repository{}, internalauth.NewTokenVerifier("real-token"), nil, "real-token", "http://unused", realLimiter)
+	real := New(repository.Repository{}, internalauth.NewTokenVerifier("real-token"), nil, "real-token", "http://unused", nil, realLimiter)
 	realApp := fiber.New()
 	real.Register(realApp)
 	tenantID := uuid.New()
@@ -142,7 +142,7 @@ func TestRateLimitBlocksRequestsOverLimit(t *testing.T) {
 // 3. TTL recovery: once the window elapses, requests succeed again.
 func TestRateLimitRecoversAfterWindow(t *testing.T) {
 	limiter := newFakeLimiter(50 * time.Millisecond)
-	h := New(repository.Repository{}, internalauth.NewTokenVerifier("t"), nil, "t", "http://unused", limiter)
+	h := New(repository.Repository{}, internalauth.NewTokenVerifier("t"), nil, "t", "http://unused", nil, limiter)
 	app := limitedTestApp(h)
 	for i := 0; i < 10; i++ {
 		res := doLimited(t, app, "register")
@@ -176,7 +176,7 @@ func TestRateLimitRecoversAfterWindow(t *testing.T) {
 // repository would panic if reached).
 func TestRateLimitFailsClosedOnLimiterError(t *testing.T) {
 	limiter := &fakeLimiter{err: errors.New("dial tcp: connection refused")}
-	h := New(repository.Repository{}, internalauth.NewTokenVerifier("t"), nil, "t", "http://unused", limiter)
+	h := New(repository.Repository{}, internalauth.NewTokenVerifier("t"), nil, "t", "http://unused", nil, limiter)
 	app := limitedTestApp(h)
 	res := doLimited(t, app, "login")
 	if res.StatusCode != fiber.StatusServiceUnavailable {
@@ -184,7 +184,7 @@ func TestRateLimitFailsClosedOnLimiterError(t *testing.T) {
 	}
 	_ = res.Body.Close()
 
-	real := New(repository.Repository{}, internalauth.NewTokenVerifier("real-token"), nil, "real-token", "http://unused", limiter)
+	real := New(repository.Repository{}, internalauth.NewTokenVerifier("real-token"), nil, "real-token", "http://unused", nil, limiter)
 	realApp := fiber.New()
 	real.Register(realApp)
 	tenantID := uuid.New()
@@ -204,7 +204,7 @@ func TestRateLimitFailsClosedOnLimiterError(t *testing.T) {
 // The nil-limiter case (no limiter passed to New) fails closed too, exactly
 // matching auth-service's Handler.limited behavior.
 func TestRateLimitNilLimiterFailsClosed(t *testing.T) {
-	h := New(repository.Repository{}, internalauth.NewTokenVerifier("t"), nil, "t", "http://unused")
+	h := New(repository.Repository{}, internalauth.NewTokenVerifier("t"), nil, "t", "http://unused", nil)
 	app := limitedTestApp(h)
 	res := doLimited(t, app, "login")
 	if res.StatusCode != fiber.StatusTooManyRequests {
@@ -220,7 +220,7 @@ func TestRateLimitNilLimiterFailsClosed(t *testing.T) {
 // it cannot introduce a distinguishing signal.
 func TestForgotPasswordRateLimitAddsNoEnumerationSignal(t *testing.T) {
 	limiter := newFakeLimiter(time.Minute)
-	h := New(repository.Repository{}, internalauth.NewTokenVerifier("t"), nil, "t", "http://unused", limiter)
+	h := New(repository.Repository{}, internalauth.NewTokenVerifier("t"), nil, "t", "http://unused", nil, limiter)
 	app := fiber.New()
 	h.Register(app)
 	tenantID := uuid.New()

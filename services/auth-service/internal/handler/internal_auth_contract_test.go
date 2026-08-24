@@ -11,7 +11,7 @@ import (
 
 func TestInternalAuthContract(t *testing.T) {
 	app := fiber.New()
-	New(service.Service{}, authcontract.Verifier(), "session", false).Register(app)
+	New(service.Service{}, authcontract.Verifier(), "session", false, nil).Register(app)
 	routes := []authcontract.Route{
 		authcontract.NewRoute(http.MethodPost, "/internal/v1/auth/login", true, "admin", 401, 401, 401),
 		authcontract.NewRoute(http.MethodPost, "/internal/v1/auth/logout", true, "admin", 401, 401, 401),

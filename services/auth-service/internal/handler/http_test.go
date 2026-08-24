@@ -31,7 +31,7 @@ func authenticatedRequest(method, path, body string) *http.Request {
 
 func TestLoginRejectsSpoofedTenantContext(t *testing.T) {
 	app := fiber.New()
-	New(serviceZero(), nilVerifier{}, "session", true).Register(app)
+	New(serviceZero(), nilVerifier{}, "session", true, nil).Register(app)
 	req := httptest.NewRequest("POST", "/internal/v1/auth/login", strings.NewReader(`{"email":"a@example.com","password":"password"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Tenant-ID", "00000000-0000-0000-0000-000000000001")
@@ -62,7 +62,7 @@ func TestRequireRoles(t *testing.T) {
 
 func TestSessionCookieIsSecureAndHTTPOnly(t *testing.T) {
 	app := fiber.New()
-	handler := New(serviceZero(), nilVerifier{}, "__Host-barber_session", true)
+	handler := New(serviceZero(), nilVerifier{}, "__Host-barber_session", true, nil)
 	app.Get("/cookie", func(c fiber.Ctx) error {
 		handler.setCookie(c, "opaque", time.Now().Add(time.Hour))
 		return c.SendStatus(fiber.StatusNoContent)
@@ -136,7 +136,7 @@ func TestPendingPasswordChangeBlocksMemberManagement(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := pendingResetOwner()
 			app := fiber.New()
-			New(svc, trustedVerifier{}, "session", true).Register(app)
+			New(svc, trustedVerifier{}, "session", true, nil).Register(app)
 			response, err := app.Test(authenticatedRequest(tc.method, tc.path, tc.body))
 			if err != nil {
 				t.Fatal(err)
@@ -155,7 +155,7 @@ func TestPendingPasswordChangeAllowsEscapeHatchAndSessionRoutes(t *testing.T) {
 	t.Run("change-password succeeds", func(t *testing.T) {
 		svc := pendingResetOwner()
 		app := fiber.New()
-		New(svc, trustedVerifier{}, "session", true).Register(app)
+		New(svc, trustedVerifier{}, "session", true, nil).Register(app)
 		response, err := app.Test(authenticatedRequest("POST", "/internal/v1/auth/change-password", `{"current_password":"old","new_password":"newpassword"}`))
 		if err != nil {
 			t.Fatal(err)
@@ -171,7 +171,7 @@ func TestPendingPasswordChangeAllowsEscapeHatchAndSessionRoutes(t *testing.T) {
 	t.Run("me succeeds", func(t *testing.T) {
 		svc := pendingResetOwner()
 		app := fiber.New()
-		New(svc, trustedVerifier{}, "session", true).Register(app)
+		New(svc, trustedVerifier{}, "session", true, nil).Register(app)
 		response, err := app.Test(authenticatedRequest("GET", "/internal/v1/auth/me", ""))
 		if err != nil {
 			t.Fatal(err)
@@ -184,7 +184,7 @@ func TestPendingPasswordChangeAllowsEscapeHatchAndSessionRoutes(t *testing.T) {
 	t.Run("logout succeeds", func(t *testing.T) {
 		svc := pendingResetOwner()
 		app := fiber.New()
-		New(svc, trustedVerifier{}, "session", true).Register(app)
+		New(svc, trustedVerifier{}, "session", true, nil).Register(app)
 		response, err := app.Test(authenticatedRequest("POST", "/internal/v1/auth/logout", ""))
 		if err != nil {
 			t.Fatal(err)
@@ -205,7 +205,7 @@ func TestCurrentPasswordOwnerCanManageMembers(t *testing.T) {
 		MustChangePassword: false,
 	}}
 	app := fiber.New()
-	New(svc, trustedVerifier{}, "session", true).Register(app)
+	New(svc, trustedVerifier{}, "session", true, nil).Register(app)
 	response, err := app.Test(authenticatedRequest("GET", "/internal/v1/auth/members", ""))
 	if err != nil {
 		t.Fatal(err)

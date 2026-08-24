@@ -10,6 +10,7 @@ import (
 	"github.com/barber-appointment/platform/adminauth"
 	platformemail "github.com/barber-appointment/platform/email"
 	"github.com/barber-appointment/platform/internalauth"
+	"github.com/barber-appointment/platform/obsmetrics"
 	"github.com/barber-appointment/platform/tenantctx"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
@@ -41,10 +42,11 @@ type Handler struct {
 	Verify        internalauth.Verifier
 	InternalToken string
 	limiter       rateLimiter
+	metrics       *obsmetrics.Registry
 }
 
-func New(r repository.Repository, v internalauth.Verifier, sender platformemail.Sender, token, appointmentURL string, limiters ...rateLimiter) Handler {
-	h := Handler{app: application.New(r, sender, customerclient.NewAppointments(appointmentURL, token)), Verify: v, InternalToken: token}
+func New(r repository.Repository, v internalauth.Verifier, sender platformemail.Sender, token, appointmentURL string, metrics *obsmetrics.Registry, limiters ...rateLimiter) Handler {
+	h := Handler{app: application.New(r, sender, customerclient.NewAppointments(appointmentURL, token)), Verify: v, InternalToken: token, metrics: metrics}
 	if len(limiters) > 0 {
 		h.limiter = limiters[0]
 	}
@@ -100,7 +102,18 @@ func (h Handler) limited(c fiber.Ctx, tenant tenantctx.Context, operation string
 	if h.limiter == nil {
 		return false, nil
 	}
-	return h.limiter.Allow(c.Context(), "customer-rate:"+tenant.TenantID.String()+":"+operation, 10, time.Minute)
+	allowed, err := h.limiter.Allow(c.Context(), "customer-rate:"+tenant.TenantID.String()+":"+operation, 10, time.Minute)
+	if h.metrics != nil {
+		switch {
+		case err != nil:
+			h.metrics.RateLimitError(operation)
+		case allowed:
+			h.metrics.RateLimitAllowed(operation)
+		default:
+			h.metrics.RateLimitBlocked(operation)
+		}
+	}
+	return allowed, err
 }
 
 func (h Handler) register(c fiber.Ctx) error {

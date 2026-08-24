@@ -13,6 +13,8 @@ import (
 	"github.com/barber-appointment/platform/internalauth"
 	"github.com/barber-appointment/platform/logging"
 	"github.com/barber-appointment/platform/migrate"
+	"github.com/barber-appointment/platform/obsmetrics"
+	"github.com/barber-appointment/platform/otelsetup"
 	"github.com/barber-appointment/platform/ratelimit"
 	"github.com/gofiber/fiber/v3"
 	"log"
@@ -32,11 +34,16 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatal(err)
 	}
-	pool, err := platformdb.OpenPool(context.Background(), cfg.DatabaseURL)
+	logger := logging.New(cfg.ServiceName)
+	tracer, shutdown := otelsetup.Init(context.Background(), cfg.ServiceName, logger)
+	defer shutdown(context.Background())
+	metrics := obsmetrics.New(cfg.ServiceName)
+	pool, err := platformdb.OpenPool(context.Background(), cfg.DatabaseURL, platformdb.WithTracer(otelsetup.PGXTracer(tracer)))
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer pool.Close()
+	metrics.RegisterPgxPool(pool)
 	if cfg.RedisURL == "" {
 		log.Fatal("REDIS_URL is required")
 	}
@@ -47,20 +54,28 @@ func main() {
 		log.Fatal(err)
 	}
 	defer redisClient.Close()
-	logger := logging.New(cfg.ServiceName)
+	metrics.RegisterRedis(redisClient)
 	sender, err := platformemail.FromEnvironment(logger)
 	if err != nil {
 		log.Fatal(err)
 	}
 	app := fiber.New()
 	app.Use(httpx.RequestID())
+	app.Use(otelsetup.Middleware(tracer))
+	app.Use(logging.HTTPCompletionMiddleware(logger))
+	app.Use(metrics.HTTPMiddleware())
+	app.Get("/metrics", metrics.Handler())
 	httpx.Health(app, func() error {
-		if err := platformdb.Ready(pool); err != nil {
-			return err
+		dbErr := platformdb.Ready(pool)
+		metrics.SetDependencyUp("postgres", dbErr == nil)
+		if dbErr != nil {
+			return dbErr
 		}
-		return infra.RedisReady(redisClient)
+		redisErr := infra.RedisReady(redisClient)
+		metrics.SetDependencyUp("redis", redisErr == nil)
+		return redisErr
 	})
-	handler.New(repository.New(pool), internalauth.NewTokenVerifier(cfg.InternalAuthToken), sender, cfg.InternalAuthToken, env("APPOINTMENT_SERVICE_URL", "http://appointment-service:8080"), ratelimit.NewRedis(redisClient)).Register(app)
+	handler.New(repository.New(pool), internalauth.NewTokenVerifier(cfg.InternalAuthToken), sender, cfg.InternalAuthToken, env("APPOINTMENT_SERVICE_URL", "http://appointment-service:8080"), metrics, ratelimit.NewRedis(redisClient)).Register(app)
 	if err := httpx.Run(app, cfg.Port, logger); err != nil {
 		log.Fatal(err)
 	}
