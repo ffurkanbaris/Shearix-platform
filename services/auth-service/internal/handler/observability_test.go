@@ -8,10 +8,14 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/barber-appointment/platform/authcontract"
+	"github.com/barber-appointment/platform/internalauth"
 	"github.com/barber-appointment/platform/logging"
 	"github.com/barber-appointment/platform/obsmetrics"
 	"github.com/barber-appointment/platform/otelsetup"
@@ -19,6 +23,38 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// fakeLimiter is a self-contained, in-memory fixed-window limiter used to
+// exercise rate-limit metric recording without depending on a real Redis
+// instance — mirrors services/customer-service/internal/handler/
+// rate_limit_test.go's fakeLimiter exactly, so the two services' tests stay
+// consistent in shape.
+type fakeLimiter struct {
+	mu      sync.Mutex
+	window  time.Duration
+	counts  map[string]int
+	resetAt map[string]time.Time
+	err     error
+}
+
+func newFakeLimiter(window time.Duration) *fakeLimiter {
+	return &fakeLimiter{window: window, counts: map[string]int{}, resetAt: map[string]time.Time{}}
+}
+
+func (l *fakeLimiter) Allow(_ context.Context, key string, limit int, _ time.Duration) (bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.err != nil {
+		return false, l.err
+	}
+	now := time.Now()
+	if reset, ok := l.resetAt[key]; !ok || now.After(reset) {
+		l.counts[key] = 0
+		l.resetAt[key] = now.Add(l.window)
+	}
+	l.counts[key]++
+	return l.counts[key] <= limit, nil
+}
 
 // recordingTracer builds a real, always-sampling TracerProvider isolated
 // from process-global state, mirroring platform/otelsetup's own test helper,
@@ -39,7 +75,19 @@ func recordingTracer(t *testing.T) trace.Tracer {
 func TestMetricsEndpointServesPrometheusFormatWithoutAuth(t *testing.T) {
 	metrics := obsmetrics.New("auth-service")
 	app := fiber.New()
+	app.Use(metrics.HTTPMiddleware())
 	app.Get("/metrics", metrics.Handler())
+	app.Get("/widgets", func(c fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
+
+	// A Prometheus *Vec collector emits nothing at all — not even its own
+	// HELP/TYPE header — until at least one label combination has been
+	// recorded, so a genuinely untouched registry would legitimately scrape
+	// as an empty body. Exercise the middleware once first so this test
+	// demonstrates the real, meaningful case: metrics actually being
+	// recorded and exposed, not just an inert endpoint.
+	if _, err := app.Test(httptest.NewRequest(http.MethodGet, "/widgets", nil)); err != nil {
+		t.Fatal(err)
+	}
 
 	res, err := app.Test(httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if err != nil {
@@ -67,9 +115,14 @@ func TestMetricsEndpointServesPrometheusFormatWithoutAuth(t *testing.T) {
 // registry's rate_limit_blocked_total counter for the "login" operation
 // increments on the request that gets a 429.
 func TestRateLimitBlockedIncrementsMetric(t *testing.T) {
-	limiter := newFakeLimiter()
+	limiter := newFakeLimiter(time.Minute)
 	metrics := obsmetrics.New("auth-service")
-	h := New(serviceZero(), authcontract.Verifier(), "session", true, metrics, limiter)
+	// A fakeService double is used instead of a real (DB-backed) service:
+	// the first 10 requests in this test are correctly *allowed* by the
+	// limiter and proceed into real login handling, which would otherwise
+	// reach a nil pgx pool and panic. fakeService.Login always succeeds
+	// without touching any repository.
+	h := New(&fakeService{}, authcontract.Verifier(), "session", true, metrics, limiter)
 	app := fiber.New()
 	h.Register(app)
 
@@ -95,7 +148,7 @@ func loginRequest(t *testing.T, app *fiber.App) *http.Response {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/internal/v1/auth/login", bytes.NewReader([]byte(`{"email":"a@example.test","password":"x"}`)))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Auth", authcontract.ValidToken)
+	req.Header.Set(internalauth.HeaderName, authcontract.ValidToken)
 	req.Header.Set("X-Tenant-ID", authcontract.TenantID)
 	req.Header.Set("X-App-Type", "admin")
 	res, err := app.Test(req)
@@ -133,29 +186,13 @@ func scrapeCounter(t *testing.T, metrics *obsmetrics.Registry, name, operation s
 		if len(parts) != 2 {
 			continue
 		}
-		var v float64
-		if _, err := parseFloatField(parts[1], &v); err != nil {
+		v, err := strconv.ParseFloat(parts[1], 64)
+		if err != nil {
 			t.Fatalf("parse metric value %q: %v", parts[1], err)
 		}
 		total += v
 	}
 	return total
-}
-
-func parseFloatField(s string, out *float64) (int, error) {
-	n, err := parseFloat(s)
-	*out = n
-	return 0, err
-}
-
-func parseFloat(s string) (float64, error) {
-	var f float64
-	_, err := jsonNumber(s, &f)
-	return f, err
-}
-
-func jsonNumber(s string, out *float64) (int, error) {
-	return 0, json.Unmarshal([]byte(s), out)
 }
 
 // TestCompletionLogIncludesTraceID exercises the exact middleware ordering
