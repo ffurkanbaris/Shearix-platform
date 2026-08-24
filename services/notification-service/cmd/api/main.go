@@ -67,8 +67,8 @@ func main() {
 		log.Fatal(e)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	reminderSettings := tenantsettings.New(env("TENANT_SERVICE_URL", "http://tenant-service:8080"), cfg.InternalAuthToken)
-	recipients := consumer.NewAppointmentRecipientClient(env("APPOINTMENT_SERVICE_URL", "http://appointment-service:8080"), cfg.InternalAuthToken)
+	reminderSettings := tenantsettings.New(env("TENANT_SERVICE_URL", "http://tenant-service:8080"), cfg.ServiceInternalToken)
+	recipients := consumer.NewAppointmentRecipientClient(env("APPOINTMENT_SERVICE_URL", "http://appointment-service:8080"), cfg.ServiceInternalToken)
 	consumerDone := make(chan struct{})
 	go func() {
 		defer close(consumerDone)

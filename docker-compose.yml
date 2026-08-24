@@ -6,7 +6,7 @@ x-app-healthcheck: &app-healthcheck
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres-dev-password}
       TENANT_DB_OWNER_PASSWORD: ${TENANT_DB_OWNER_PASSWORD:-tenant-owner-dev-password}
@@ -35,19 +35,35 @@ services:
       timeout: 3s
       retries: 20
   redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
+    image: redis:7.4.11-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+    # requirepass is required in every environment, including local dev, so
+    # dev exercises the same authenticated code path production requires.
+    # The dev default below is a placeholder, never a safe production value
+    # - production sets REDIS_PASSWORD with no fallback (see
+    # infrastructure/caddy/docker-compose.production.yml).
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-redis-dev-password}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis-dev-password}
     volumes: ["redis_data:/data"]
     networks: [private]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 20
   nats:
-    image: nats:2.10-alpine
-    command: ["-js", "-sd", "/data", "-m", "8222"]
-    volumes: ["nats_data:/data"]
+    image: nats:2.10-alpine@sha256:b83efabe3e7def1e0a4a31ec6e078999bb17c80363f881df35edc70fcb6bb927
+    # Client auth is required in every environment (see
+    # infrastructure/nats/nats-server.conf) - no anonymous access, even in
+    # dev. Dev gets a convenient but real default; production requires
+    # NATS_USER/NATS_PASSWORD with no fallback.
+    command: ["-c", "/etc/nats/nats-server.conf"]
+    environment:
+      NATS_USER: ${NATS_USER:-nats-dev-user}
+      NATS_PASSWORD: ${NATS_PASSWORD:-nats-dev-password}
+    volumes:
+      - nats_data:/data
+      - ./infrastructure/nats/nats-server.conf:/etc/nats/nats-server.conf:ro
     networks: [private]
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:8222/healthz >/dev/null"]
@@ -64,7 +80,7 @@ services:
     depends_on: {postgres: {condition: service_healthy}}
     networks: [private]
   tenant-seed:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     environment: {PGPASSWORD: "${TENANT_DB_OWNER_PASSWORD:-tenant-owner-dev-password}"}
     volumes: ["./infrastructure/seeds/tenant-development.sql:/seed.sql:ro"]
     command: ["psql", "-h", "postgres", "-U", "tenant_db_migrator", "-d", "tenant_db", "-v", "ON_ERROR_STOP=1", "-f", "/seed.sql"]
@@ -78,7 +94,7 @@ services:
     depends_on: {postgres: {condition: service_healthy}}
     networks: [private]
   auth-seed:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     environment: {PGPASSWORD: "${AUTH_DB_OWNER_PASSWORD:-auth-owner-dev-password}"}
     volumes: ["./infrastructure/seeds/auth-development.sql:/seed.sql:ro"]
     command: ["psql", "-h", "postgres", "-U", "auth_db_migrator", "-d", "auth_db", "-v", "ON_ERROR_STOP=1", "-f", "/seed.sql"]
@@ -120,7 +136,7 @@ services:
     depends_on: {postgres: {condition: service_healthy}}
     networks: [private]
   customer-seed:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     environment: {PGPASSWORD: "${CUSTOMER_DB_OWNER_PASSWORD:-customer-owner-dev-password}"}
     volumes: ["./infrastructure/seeds/customer-development.sql:/seed.sql:ro"]
     command: ["psql", "-h", "postgres", "-U", "customer_db_migrator", "-d", "customer_db", "-v", "ON_ERROR_STOP=1", "-f", "/seed.sql"]
@@ -137,7 +153,7 @@ services:
     build: {context: ., dockerfile: services/tenant-service/Dockerfile}
     environment:
       DATABASE_URL: postgresql://tenant_db_app:${TENANT_DB_APP_PASSWORD:-tenant-app-dev-password}@postgres:5432/tenant_db?sslmode=disable
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis-dev-password}@redis:6379/0
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-replace-with-a-long-development-secret}
       AUTH_SERVICE_URL: http://auth-service:8080
       APP_ENV: ${APP_ENV:-development}
@@ -196,7 +212,7 @@ services:
     build: {context: ., dockerfile: services/auth-service/Dockerfile}
     environment:
       DATABASE_URL: "postgresql://auth_db_app:${AUTH_DB_APP_PASSWORD:-auth-app-dev-password}@postgres:5432/auth_db?sslmode=disable"
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis-dev-password}@redis:6379/0
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-log}
       EMAIL_FROM: ${EMAIL_FROM:-no-reply@barber.local}
       APP_ENV: ${APP_ENV:-development}
@@ -216,7 +232,7 @@ services:
     environment:
       AUTH_TEST_DATABASE_URL: "postgresql://auth_db_app:${AUTH_DB_APP_PASSWORD:-auth-app-dev-password}@postgres:5432/auth_db?sslmode=disable"
       AUTH_TEST_OWNER_DATABASE_URL: "postgresql://auth_db_migrator:${AUTH_DB_OWNER_PASSWORD:-auth-owner-dev-password}@postgres:5432/auth_db?sslmode=disable"
-      AUTH_TEST_REDIS_URL: redis://redis:6379/14
+      AUTH_TEST_REDIS_URL: redis://:${REDIS_PASSWORD:-redis-dev-password}@redis:6379/14
     depends_on: {auth-migrate: {condition: service_completed_successfully}, redis: {condition: service_healthy}}
     networks: [private]
   customer-integration-test:
@@ -227,7 +243,7 @@ services:
     environment:
       CUSTOMER_TEST_DATABASE_URL: "postgresql://customer_db_app:${CUSTOMER_DB_APP_PASSWORD:-customer-app-dev-password}@postgres:5432/customer_db?sslmode=disable"
       CUSTOMER_TEST_OWNER_DATABASE_URL: "postgresql://customer_db_migrator:${CUSTOMER_DB_OWNER_PASSWORD:-customer-owner-dev-password}@postgres:5432/customer_db?sslmode=disable"
-      CUSTOMER_TEST_REDIS_URL: redis://redis:6379/13
+      CUSTOMER_TEST_REDIS_URL: redis://:${REDIS_PASSWORD:-redis-dev-password}@redis:6379/13
     depends_on: {customer-migrate: {condition: service_completed_successfully}, redis: {condition: service_healthy}}
     networks: [private]
   tenant-integration-test:
@@ -238,7 +254,7 @@ services:
     environment:
       TENANT_TEST_DATABASE_URL: "postgresql://tenant_db_app:${TENANT_DB_APP_PASSWORD:-tenant-app-dev-password}@postgres:5432/tenant_db?sslmode=disable"
       TENANT_TEST_OWNER_DATABASE_URL: "postgresql://tenant_db_migrator:${TENANT_DB_OWNER_PASSWORD:-tenant-owner-dev-password}@postgres:5432/tenant_db?sslmode=disable"
-      TENANT_TEST_REDIS_URL: redis://redis:6379/15
+      TENANT_TEST_REDIS_URL: redis://:${REDIS_PASSWORD:-redis-dev-password}@redis:6379/15
     depends_on: {tenant-migrate: {condition: service_completed_successfully}, redis: {condition: service_healthy}}
     networks: [private]
   barber-integration-test:
@@ -289,8 +305,21 @@ services:
     environment:
       NOTIFICATION_TEST_DATABASE_URL: "postgresql://notification_db_app:${NOTIFICATION_DB_APP_PASSWORD:-notification-app-dev-password}@postgres:5432/notification_db?sslmode=disable"
       NOTIFICATION_TEST_OWNER_DATABASE_URL: "postgresql://notification_db_migrator:${NOTIFICATION_DB_OWNER_PASSWORD:-notification-owner-dev-password}@postgres:5432/notification_db?sslmode=disable"
-      NOTIFICATION_TEST_NATS_URL: nats://nats:4222
+      NOTIFICATION_TEST_NATS_URL: nats://${NATS_USER:-nats-dev-user}:${NATS_PASSWORD:-nats-dev-password}@nats:4222
     depends_on: {notification-migrate: {condition: service_completed_successfully}, nats: {condition: service_healthy}}
+    networks: [private]
+  platform-auth-integration-test:
+    profiles: ["test"]
+    build: {context: ., dockerfile: services/tenant-service/Dockerfile, target: build}
+    working_dir: /workspace/platform
+    command: ["sh", "-c", "GOWORK=off go test ./infra -run Integration -count=1"]
+    environment:
+      INFRA_TEST_REDIS_ADDR: redis:6379
+      INFRA_TEST_REDIS_PASSWORD: ${REDIS_PASSWORD:-redis-dev-password}
+      INFRA_TEST_NATS_ADDR: nats:4222
+      INFRA_TEST_NATS_USER: ${NATS_USER:-nats-dev-user}
+      INFRA_TEST_NATS_PASSWORD: ${NATS_PASSWORD:-nats-dev-password}
+    depends_on: {redis: {condition: service_healthy}, nats: {condition: service_healthy}}
     networks: [private]
   barber-service:
     build: {context: ., dockerfile: services/barber-service/Dockerfile}
@@ -336,7 +365,7 @@ services:
       TENANT_SERVICE_URL: http://tenant-service:8080
       SCHEDULING_SERVICE_URL: http://scheduling-service:8080
       CUSTOMER_SERVICE_URL: http://customer-service:8080
-      NATS_URL: nats://nats:4222
+      NATS_URL: nats://${NATS_USER:-nats-dev-user}:${NATS_PASSWORD:-nats-dev-password}@nats:4222
     depends_on: {appointment-migrate: {condition: service_completed_successfully}}
     healthcheck: *app-healthcheck
     networks: [private]
@@ -344,7 +373,7 @@ services:
     build: {context: ., dockerfile: services/customer-service/Dockerfile}
     environment:
       DATABASE_URL: "postgresql://customer_db_app:${CUSTOMER_DB_APP_PASSWORD:-customer-app-dev-password}@postgres:5432/customer_db?sslmode=disable"
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis-dev-password}@redis:6379/0
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-log}
       EMAIL_FROM: ${EMAIL_FROM:-no-reply@barber.local}
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-replace-with-a-long-development-secret}
@@ -357,7 +386,7 @@ services:
     build: {context: ., dockerfile: services/notification-service/Dockerfile}
     environment:
       DATABASE_URL: "postgresql://notification_db_app:${NOTIFICATION_DB_APP_PASSWORD:-notification-app-dev-password}@postgres:5432/notification_db?sslmode=disable"
-      NATS_URL: "nats://nats:4222"
+      NATS_URL: "nats://${NATS_USER:-nats-dev-user}:${NATS_PASSWORD:-nats-dev-password}@nats:4222"
       TENANT_SERVICE_URL: http://tenant-service:8080
       APPOINTMENT_SERVICE_URL: http://appointment-service:8080
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-replace-with-a-long-development-secret}

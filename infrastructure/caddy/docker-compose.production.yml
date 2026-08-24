@@ -1,8 +1,41 @@
 # Production edge overlay. Use with:
 # docker compose -f docker-compose.yml -f infrastructure/caddy/docker-compose.production.yml up -d
 # The base Compose file remains HTTP-only for local development.
+#
+# x-go-service-hardening applies to every service backed by this repo's own
+# statically-built Go binaries (the gateway and all 8 backend services).
+# Each is a single process that writes nothing to disk except transient
+# temp files, so a read-only root filesystem + a small tmpfs /tmp is safe;
+# dropping every Linux capability and disabling privilege escalation removes
+# an entire class of container-breakout primitives even if the process were
+# somehow compromised. Not applied to postgres/redis/nats/caddy (upstream
+# images this repo does not control the exact runtime write-path contract
+# of) or admin-web/booking-web (not yet verified safe under read_only - see
+# the production runbook's "remaining risks" section).
+x-go-service-hardening: &go-hardening
+  read_only: true
+  tmpfs: ["/tmp"]
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  mem_limit: 256m
+
+# x-baseline-hardening applies no-new-privileges + a dropped capability set
+# to the Next.js frontends and NATS - verified empirically to still start
+# healthy under it. postgres, redis, and caddy each need a real capability
+# at container startup (see their own inline comments) so they are hardened
+# individually instead of via this shared anchor.
+x-baseline-hardening: &baseline-hardening
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+
 services:
   postgres:
+    # Not hardened with cap_drop/no-new-privileges: the official image's
+    # entrypoint must run as root to chown the data directory and then
+    # setuid/setgid to the postgres user on startup - verified empirically
+    # (cap_drop: [ALL] here produces "chmod: Operation not permitted" /
+    # "failed switching to 'postgres': operation not permitted" and the
+    # container never becomes healthy).
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
@@ -23,9 +56,21 @@ services:
       CUSTOMER_DB_OWNER_PASSWORD: ${CUSTOMER_DB_OWNER_PASSWORD:?CUSTOMER_DB_OWNER_PASSWORD is required}
       CUSTOMER_DB_APP_PASSWORD: ${CUSTOMER_DB_APP_PASSWORD:?CUSTOMER_DB_APP_PASSWORD is required}
   redis:
+    # Not hardened with cap_drop/no-new-privileges: the official image's
+    # entrypoint (via setpriv) must run as root to drop privileges to the
+    # redis user on startup - verified empirically (cap_drop: [ALL] here
+    # produces "setpriv: setresuid failed: Operation not permitted" and the
+    # container never becomes healthy).
     restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
   nats:
+    <<: *baseline-hardening
     restart: unless-stopped
+    environment:
+      NATS_USER: ${NATS_USER:?NATS_USER is required}
+      NATS_PASSWORD: ${NATS_PASSWORD:?NATS_PASSWORD is required}
 
   tenant-seed:
     entrypoint: ["/bin/true"]
@@ -37,6 +82,7 @@ services:
     volumes: !reset []
 
   gateway-service:
+    <<: *go-hardening
     # Caddy is the sole host-published application edge in production.
     ports: !reset []
     networks: !override [private]
@@ -47,21 +93,26 @@ services:
       PLATFORM_ADMIN_TOKEN: ${PLATFORM_ADMIN_TOKEN:?PLATFORM_ADMIN_TOKEN is required}
 
   admin-web:
+    <<: *baseline-hardening
     ports: !reset []
     networks: !override [private]
     restart: "on-failure:5"
 
   booking-web:
+    <<: *baseline-hardening
     ports: !reset []
     networks: !override [private]
     restart: "on-failure:5"
 
   auth-service:
+    <<: *go-hardening
     restart: "on-failure:5"
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql://auth_db_app:${AUTH_DB_APP_PASSWORD:?AUTH_DB_APP_PASSWORD is required}@postgres:5432/auth_db?sslmode=disable
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
+      SERVICE_INTERNAL_TOKEN: ${SERVICE_INTERNAL_TOKEN:?SERVICE_INTERNAL_TOKEN is required}
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:?EMAIL_PROVIDER is required}
       EMAIL_FROM: ${EMAIL_FROM:?EMAIL_FROM is required}
       SMTP_ADDRESS: ${SMTP_ADDRESS:?SMTP_ADDRESS is required}
@@ -71,52 +122,70 @@ services:
       AUTH_COOKIE_SECURE: "true"
 
   tenant-service:
+    <<: *go-hardening
     restart: "on-failure:5"
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql://tenant_db_app:${TENANT_DB_APP_PASSWORD:?TENANT_DB_APP_PASSWORD is required}@postgres:5432/tenant_db?sslmode=disable
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
+      SERVICE_INTERNAL_TOKEN: ${SERVICE_INTERNAL_TOKEN:?SERVICE_INTERNAL_TOKEN is required}
   barber-service:
+    <<: *go-hardening
     restart: "on-failure:5"
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql://barber_db_app:${BARBER_DB_APP_PASSWORD:?BARBER_DB_APP_PASSWORD is required}@postgres:5432/barber_db?sslmode=disable
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
+      SERVICE_INTERNAL_TOKEN: ${SERVICE_INTERNAL_TOKEN:?SERVICE_INTERNAL_TOKEN is required}
   catalog-service:
+    <<: *go-hardening
     restart: "on-failure:5"
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql://catalog_db_app:${CATALOG_DB_APP_PASSWORD:?CATALOG_DB_APP_PASSWORD is required}@postgres:5432/catalog_db?sslmode=disable
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
+      SERVICE_INTERNAL_TOKEN: ${SERVICE_INTERNAL_TOKEN:?SERVICE_INTERNAL_TOKEN is required}
   scheduling-service:
+    <<: *go-hardening
     restart: "on-failure:5"
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql://scheduling_db_app:${SCHEDULING_DB_APP_PASSWORD:?SCHEDULING_DB_APP_PASSWORD is required}@postgres:5432/scheduling_db?sslmode=disable
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
+      SERVICE_INTERNAL_TOKEN: ${SERVICE_INTERNAL_TOKEN:?SERVICE_INTERNAL_TOKEN is required}
   appointment-service:
+    <<: *go-hardening
     restart: "on-failure:5"
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql://appointment_db_app:${APPOINTMENT_DB_APP_PASSWORD:?APPOINTMENT_DB_APP_PASSWORD is required}@postgres:5432/appointment_db?sslmode=disable
+      NATS_URL: nats://${NATS_USER:?NATS_USER is required}:${NATS_PASSWORD:?NATS_PASSWORD is required}@nats:4222
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
+      SERVICE_INTERNAL_TOKEN: ${SERVICE_INTERNAL_TOKEN:?SERVICE_INTERNAL_TOKEN is required}
   customer-service:
+    <<: *go-hardening
     restart: "on-failure:5"
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql://customer_db_app:${CUSTOMER_DB_APP_PASSWORD:?CUSTOMER_DB_APP_PASSWORD is required}@postgres:5432/customer_db?sslmode=disable
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
+      SERVICE_INTERNAL_TOKEN: ${SERVICE_INTERNAL_TOKEN:?SERVICE_INTERNAL_TOKEN is required}
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:?EMAIL_PROVIDER is required}
       EMAIL_FROM: ${EMAIL_FROM:?EMAIL_FROM is required}
       SMTP_ADDRESS: ${SMTP_ADDRESS:?SMTP_ADDRESS is required}
       SMTP_USERNAME: ${SMTP_USERNAME:?SMTP_USERNAME is required}
       SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD is required}
   notification-service:
+    <<: *go-hardening
     restart: "on-failure:5"
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql://notification_db_app:${NOTIFICATION_DB_APP_PASSWORD:?NOTIFICATION_DB_APP_PASSWORD is required}@postgres:5432/notification_db?sslmode=disable
+      NATS_URL: nats://${NATS_USER:?NATS_USER is required}:${NATS_PASSWORD:?NATS_PASSWORD is required}@nats:4222
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
+      SERVICE_INTERNAL_TOKEN: ${SERVICE_INTERNAL_TOKEN:?SERVICE_INTERNAL_TOKEN is required}
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:?EMAIL_PROVIDER is required}
       EMAIL_FROM: ${EMAIL_FROM:?EMAIL_FROM is required}
       SMTP_ADDRESS: ${SMTP_ADDRESS:?SMTP_ADDRESS is required}
@@ -124,7 +193,10 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD is required}
 
   caddy:
-    image: caddy:2.10-alpine
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
     restart: unless-stopped
     environment:
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}

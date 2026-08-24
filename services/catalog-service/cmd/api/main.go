@@ -54,7 +54,7 @@ func main() {
 		return err
 	})
 	app.Get("/metrics", metrics.Handler())
-	handler.New(repository.New(pool), internalauth.NewTokenVerifier(cfg.InternalAuthToken), adminauth.New(env("AUTH_SERVICE_URL", "http://auth-service:8080"), cfg.InternalAuthToken), barberclient.New(env("BARBER_SERVICE_URL", "http://barber-service:8080"), cfg.InternalAuthToken)).Register(app)
+	handler.New(repository.New(pool), internalauth.NewMultiTokenVerifier(cfg.InternalAuthToken, cfg.ServiceInternalToken), adminauth.New(env("AUTH_SERVICE_URL", "http://auth-service:8080"), cfg.ServiceInternalToken), barberclient.New(env("BARBER_SERVICE_URL", "http://barber-service:8080"), cfg.ServiceInternalToken)).Register(app)
 	if err := httpx.Run(app, cfg.Port, logger); err != nil {
 		log.Fatal(err)
 	}

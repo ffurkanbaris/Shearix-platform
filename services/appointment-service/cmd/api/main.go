@@ -85,10 +85,10 @@ func main() {
 	})
 	repo := repository.New(pool)
 	deps := appointmentclient.New(
-		schedulingdeps.New(env("BARBER_SERVICE_URL", "http://barber-service:8080"), env("CATALOG_SERVICE_URL", "http://catalog-service:8080"), env("TENANT_SERVICE_URL", "http://tenant-service:8080"), cfg.InternalAuthToken),
-		env("SCHEDULING_SERVICE_URL", "http://scheduling-service:8080"), env("CUSTOMER_SERVICE_URL", "http://customer-service:8080"), cfg.InternalAuthToken,
+		schedulingdeps.New(env("BARBER_SERVICE_URL", "http://barber-service:8080"), env("CATALOG_SERVICE_URL", "http://catalog-service:8080"), env("TENANT_SERVICE_URL", "http://tenant-service:8080"), cfg.ServiceInternalToken),
+		env("SCHEDULING_SERVICE_URL", "http://scheduling-service:8080"), env("CUSTOMER_SERVICE_URL", "http://customer-service:8080"), cfg.ServiceInternalToken,
 	)
-	handler.New(application.NewBooking(repo, deps), application.NewLifecycle(repo, deps), application.NewQuery(repo, deps), internalauth.NewTokenVerifier(cfg.InternalAuthToken), adminauth.New(env("AUTH_SERVICE_URL", "http://auth-service:8080"), cfg.InternalAuthToken)).Register(app)
+	handler.New(application.NewBooking(repo, deps), application.NewLifecycle(repo, deps), application.NewQuery(repo, deps), internalauth.NewMultiTokenVerifier(cfg.InternalAuthToken, cfg.ServiceInternalToken), adminauth.New(env("AUTH_SERVICE_URL", "http://auth-service:8080"), cfg.ServiceInternalToken)).Register(app)
 	runErr := httpx.Run(app, cfg.Port, logger)
 	stopRuntime()
 	publisher.Close()

@@ -56,9 +56,9 @@ func main() {
 		return err
 	})
 	app.Get("/metrics", metrics.Handler())
-	deps := schedulingdeps.New(env("BARBER_SERVICE_URL", "http://barber-service:8080"), env("CATALOG_SERVICE_URL", "http://catalog-service:8080"), env("TENANT_SERVICE_URL", "http://tenant-service:8080"), cfg.InternalAuthToken)
-	scheduling := application.New(repository.New(pool), deps, service.NewHTTPOccupancy(env("APPOINTMENT_SERVICE_URL", "http://appointment-service:8080"), cfg.InternalAuthToken), handler.Interval(env("BOOKING_INTERVAL_MINUTES", "15")))
-	handler.New(scheduling, internalauth.NewTokenVerifier(cfg.InternalAuthToken), adminauth.New(env("AUTH_SERVICE_URL", "http://auth-service:8080"), cfg.InternalAuthToken)).Register(app)
+	deps := schedulingdeps.New(env("BARBER_SERVICE_URL", "http://barber-service:8080"), env("CATALOG_SERVICE_URL", "http://catalog-service:8080"), env("TENANT_SERVICE_URL", "http://tenant-service:8080"), cfg.ServiceInternalToken)
+	scheduling := application.New(repository.New(pool), deps, service.NewHTTPOccupancy(env("APPOINTMENT_SERVICE_URL", "http://appointment-service:8080"), cfg.ServiceInternalToken), handler.Interval(env("BOOKING_INTERVAL_MINUTES", "15")))
+	handler.New(scheduling, internalauth.NewMultiTokenVerifier(cfg.InternalAuthToken, cfg.ServiceInternalToken), adminauth.New(env("AUTH_SERVICE_URL", "http://auth-service:8080"), cfg.ServiceInternalToken)).Register(app)
 	if err := httpx.Run(app, cfg.Port, logger); err != nil {
 		log.Fatal(err)
 	}

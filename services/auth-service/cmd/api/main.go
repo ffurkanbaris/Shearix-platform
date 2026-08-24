@@ -80,7 +80,7 @@ func main() {
 		}
 		return nil
 	})
-	handler.New(authService, internalauth.NewTokenVerifier(cfg.InternalAuthToken), cfg.CookieName, cfg.CookieSecure, metrics, ratelimit.NewRedis(redisClient)).Register(app)
+	handler.New(authService, internalauth.NewMultiTokenVerifier(cfg.InternalAuthToken, cfg.ServiceInternalToken), cfg.CookieName, cfg.CookieSecure, metrics, ratelimit.NewRedis(redisClient)).Register(app)
 	if err := httpx.Run(app, cfg.Port, logger); err != nil {
 		log.Fatal(err)
 	}

@@ -72,7 +72,7 @@ func main() {
 		}
 		return nil
 	})
-	handler.New(service.New(repository.New(pool, cache), service.Dependencies{AllowLocalhostDomains: cfg.AllowLocalhostDomains}), internalauth.NewTokenVerifier(cfg.InternalAuthToken), adminauth.New(cfg.AuthServiceURL, cfg.InternalAuthToken)).Register(app)
+	handler.New(service.New(repository.New(pool, cache), service.Dependencies{AllowLocalhostDomains: cfg.AllowLocalhostDomains}), internalauth.NewMultiTokenVerifier(cfg.InternalAuthToken, cfg.ServiceInternalToken), adminauth.New(cfg.AuthServiceURL, cfg.ServiceInternalToken)).Register(app)
 	if err := httpx.Run(app, cfg.Port, logger); err != nil {
 		os.Exit(1)
 	}

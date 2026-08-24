@@ -75,7 +75,7 @@ func main() {
 		metrics.SetDependencyUp("redis", redisErr == nil)
 		return redisErr
 	})
-	handler.New(repository.New(pool), internalauth.NewTokenVerifier(cfg.InternalAuthToken), sender, cfg.InternalAuthToken, env("APPOINTMENT_SERVICE_URL", "http://appointment-service:8080"), metrics, ratelimit.NewRedis(redisClient)).Register(app)
+	handler.New(repository.New(pool), internalauth.NewMultiTokenVerifier(cfg.InternalAuthToken, cfg.ServiceInternalToken), sender, cfg.ServiceInternalToken, env("APPOINTMENT_SERVICE_URL", "http://appointment-service:8080"), metrics, ratelimit.NewRedis(redisClient)).Register(app)
 	if err := httpx.Run(app, cfg.Port, logger); err != nil {
 		log.Fatal(err)
 	}

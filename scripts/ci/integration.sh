@@ -10,3 +10,6 @@ for service in tenant auth barber catalog scheduling appointment customer notifi
   echo "==> integration: $service-service"
   docker compose -p "$project" -f "$repo/docker-compose.yml" --profile test run --build --rm "$service-integration-test"
 done
+
+echo "==> integration: platform (Redis/NATS auth)"
+docker compose -p "$project" -f "$repo/docker-compose.yml" --profile test run --build --rm platform-auth-integration-test

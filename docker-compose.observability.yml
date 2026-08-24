@@ -9,7 +9,7 @@
 # core stack depends on any service defined here.
 services:
   prometheus:
-    image: prom/prometheus:v2.54.1
+    image: prom/prometheus:v2.54.1@sha256:f6639335d34a77d9d9db382b92eeb7fc00934be8eae81dbc03b31cfe90411a94
     volumes:
       - ./infrastructure/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -17,14 +17,14 @@ services:
     networks: [public, private]
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.108.0
+    image: otel/opentelemetry-collector-contrib:0.108.0@sha256:923eb1cfae32fe09676cfd74762b2b237349f2273888529594f6c6ffe1fb3d7e
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
       - ./infrastructure/observability/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
     networks: [private]
 
   grafana:
-    image: grafana/grafana:11.2.0
+    image: grafana/grafana:11.2.0@sha256:408afb9726de5122b00a2576763a8a57a3c86d5b0eff5305bc994ceb3eb96c3f
     environment:
       # Dev-only default credentials. NEVER use these in production; set a
       # real GF_SECURITY_ADMIN_PASSWORD (and disable admin login as needed)

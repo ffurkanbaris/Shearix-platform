@@ -21,6 +21,8 @@ env \
   CUSTOMER_DB_OWNER_PASSWORD=ci-customer-owner CUSTOMER_DB_APP_PASSWORD=ci-customer-app \
   NOTIFICATION_DB_OWNER_PASSWORD=ci-notification-owner NOTIFICATION_DB_APP_PASSWORD=ci-notification-app \
   INTERNAL_AUTH_TOKEN=ci-internal-auth-token-long-enough PLATFORM_ADMIN_TOKEN=ci-platform-token-long-enough \
+  SERVICE_INTERNAL_TOKEN=ci-service-internal-token-long-enough \
+  REDIS_PASSWORD=ci-redis-password NATS_USER=ci-nats-user NATS_PASSWORD=ci-nats-password \
   EMAIL_PROVIDER=smtp EMAIL_FROM=ci@example.invalid SMTP_ADDRESS=smtp.example.invalid:587 \
   SMTP_USERNAME=ci-user SMTP_PASSWORD=ci-smtp-password CADDY_ACME_EMAIL=ci@example.invalid \
   docker compose -f "$base" -f "$production" config -q
