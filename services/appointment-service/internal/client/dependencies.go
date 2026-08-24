@@ -12,6 +12,7 @@ import (
 	"github.com/barber-appointment/appointment-service/internal/application"
 	"github.com/barber-appointment/appointment-service/internal/domain"
 	"github.com/barber-appointment/platform/internalauth"
+	"github.com/barber-appointment/platform/otelsetup"
 	"github.com/barber-appointment/platform/schedulingdeps"
 	"github.com/barber-appointment/platform/tenantctx"
 	"github.com/google/uuid"
@@ -24,7 +25,7 @@ type Dependencies struct {
 }
 
 func New(deps schedulingdeps.Client, schedulingURL, customerURL, token string) Dependencies {
-	return Dependencies{deps: deps, schedulingURL: strings.TrimRight(schedulingURL, "/"), customerURL: strings.TrimRight(customerURL, "/"), token: token, http: &http.Client{Timeout: 3 * time.Second}}
+	return Dependencies{deps: deps, schedulingURL: strings.TrimRight(schedulingURL, "/"), customerURL: strings.TrimRight(customerURL, "/"), token: token, http: &http.Client{Timeout: 3 * time.Second, Transport: otelsetup.WrapTransport(nil)}}
 }
 func (d Dependencies) BranchBarber(ctx context.Context, t tenantctx.Context, branch, barber uuid.UUID) error {
 	return d.deps.BranchBarber(ctx, t, branch, barber)

@@ -1,0 +1,193 @@
+{
+  "id": null,
+  "uid": "barber-saas-overview",
+  "title": "Barber SaaS Overview",
+  "description": "Dev-only overview dashboard: HTTP traffic/errors/latency, DB pool usage, dependency health, outbox backlog, NATS redelivery, and notification outcomes. Panels for metrics not yet emitted by a service show No data until that wiring lands.",
+  "tags": ["barber-saas", "dev"],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "HTTP traffic, errors, latency",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "HTTP request rate by service",
+      "description": "sum(rate(http_requests_total[5m])) by (service)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 1},
+      "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+      "targets": [
+        {"expr": "sum(rate(http_requests_total[5m])) by (service)", "legendFormat": "{{service}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "5xx error rate vs total request rate",
+      "description": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) by (service) vs sum(rate(http_requests_total[5m])) by (service)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 1},
+      "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+      "targets": [
+        {"expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) by (service)", "legendFormat": "{{service}} 5xx", "refId": "A"},
+        {"expr": "sum(rate(http_requests_total[5m])) by (service)", "legendFormat": "{{service}} total", "refId": "B"}
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "HTTP request duration p50/p95/p99 by service",
+      "description": "histogram_quantile over http_request_duration_seconds by service (method, route, status also available as labels)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 9},
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "fillOpacity": 5}}, "overrides": []},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service))", "legendFormat": "{{service}} p50", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service))", "legendFormat": "{{service}} p95", "refId": "B"},
+        {"expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service))", "legendFormat": "{{service}} p99", "refId": "C"}
+      ]
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "DB pool usage",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 17},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "pgx pool connections by service",
+      "description": "pgx_pool_total_conns, pgx_pool_idle_conns, pgx_pool_acquired_conns, pgx_pool_max_conns",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 18},
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+      "targets": [
+        {"expr": "pgx_pool_total_conns", "legendFormat": "{{service}} total", "refId": "A"},
+        {"expr": "pgx_pool_idle_conns", "legendFormat": "{{service}} idle", "refId": "B"},
+        {"expr": "pgx_pool_acquired_conns", "legendFormat": "{{service}} acquired", "refId": "C"},
+        {"expr": "pgx_pool_max_conns", "legendFormat": "{{service}} max", "refId": "D"}
+      ]
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "Dependency health",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 26},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 21,
+      "type": "state-timeline",
+      "title": "dependency_up by service + dependency",
+      "description": "dependency_up (1 = up, 0 = down), labeled by service and dependency",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 27},
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "targets": [
+        {"expr": "dependency_up", "legendFormat": "{{service}} -> {{dependency}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 30,
+      "type": "row",
+      "title": "Outbox backlog (appointment-service)",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 35},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Outbox backlog size",
+      "description": "outbox_backlog",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 36},
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+      "targets": [{"expr": "outbox_backlog", "legendFormat": "{{service}}", "refId": "A"}]
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Outbox oldest pending age",
+      "description": "outbox_oldest_pending_age_seconds",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 36},
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+      "targets": [{"expr": "outbox_oldest_pending_age_seconds", "legendFormat": "{{service}}", "refId": "A"}]
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "Outbox publish failures / retries / terminal (rate)",
+      "description": "rate(outbox_publish_failures_total[5m]), rate(outbox_publish_retries_total[5m]), rate(outbox_terminal_total[5m])",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 36},
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+      "targets": [
+        {"expr": "rate(outbox_publish_failures_total[5m])", "legendFormat": "failures", "refId": "A"},
+        {"expr": "rate(outbox_publish_retries_total[5m])", "legendFormat": "retries", "refId": "B"},
+        {"expr": "rate(outbox_terminal_total[5m])", "legendFormat": "terminal", "refId": "C"}
+      ]
+    },
+    {
+      "id": 40,
+      "type": "row",
+      "title": "NATS redelivery (notification-service)",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 44},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "NATS messages redelivered / terminal (rate)",
+      "description": "rate(nats_messages_redelivered_total[5m]), rate(nats_messages_terminal_total[5m])",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 45},
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+      "targets": [
+        {"expr": "rate(nats_messages_redelivered_total[5m])", "legendFormat": "redelivered", "refId": "A"},
+        {"expr": "rate(nats_messages_terminal_total[5m])", "legendFormat": "terminal", "refId": "B"}
+      ]
+    },
+    {
+      "id": 50,
+      "type": "row",
+      "title": "Notification outcomes (notification-service)",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 53},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 51,
+      "type": "timeseries",
+      "title": "Notification sent / failed / retried / claim-recovered / planned (rate)",
+      "description": "rate(notification_sent_total[5m]), rate(notification_failed_total[5m]), rate(notification_retried_total[5m]), rate(notification_claim_recovered_total[5m]), rate(notification_planned_total[5m])",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 54},
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+      "targets": [
+        {"expr": "rate(notification_sent_total[5m])", "legendFormat": "sent", "refId": "A"},
+        {"expr": "rate(notification_failed_total[5m])", "legendFormat": "failed", "refId": "B"},
+        {"expr": "rate(notification_retried_total[5m])", "legendFormat": "retried", "refId": "C"},
+        {"expr": "rate(notification_claim_recovered_total[5m])", "legendFormat": "claim_recovered", "refId": "D"},
+        {"expr": "rate(notification_planned_total[5m])", "legendFormat": "planned", "refId": "E"}
+      ]
+    }
+  ]
+}

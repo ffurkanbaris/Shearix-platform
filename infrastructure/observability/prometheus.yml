@@ -1,0 +1,22 @@
+# Dev-only Prometheus scrape config for the observability overlay
+# (docker-compose.observability.yml). Not used in production.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: barber-services
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - gateway-service:8080
+          - tenant-service:8080
+          - auth-service:8080
+          - barber-service:8080
+          - catalog-service:8080
+          - scheduling-service:8080
+          - customer-service:8080
+          - appointment-service:8080
+          - notification-service:8080
+        labels:
+          environment: development

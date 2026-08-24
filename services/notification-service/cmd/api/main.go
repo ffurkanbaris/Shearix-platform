@@ -13,6 +13,8 @@ import (
 	"github.com/barber-appointment/platform/infra"
 	"github.com/barber-appointment/platform/logging"
 	"github.com/barber-appointment/platform/migrate"
+	"github.com/barber-appointment/platform/obsmetrics"
+	"github.com/barber-appointment/platform/otelsetup"
 	"github.com/barber-appointment/platform/tenantsettings"
 	"github.com/gofiber/fiber/v3"
 	"log"
@@ -35,11 +37,16 @@ func main() {
 	if e := cfg.Validate(); e != nil {
 		log.Fatal(e)
 	}
-	pool, e := platformdb.OpenPool(context.Background(), cfg.DatabaseURL)
+	logger := logging.New(cfg.ServiceName)
+	tracer, shutdown := otelsetup.Init(context.Background(), cfg.ServiceName, logger)
+	defer shutdown(context.Background())
+	metrics := obsmetrics.New(cfg.ServiceName)
+	pool, e := platformdb.OpenPool(context.Background(), cfg.DatabaseURL, platformdb.WithTracer(otelsetup.PGXTracer(tracer)))
 	if e != nil {
 		log.Fatal(e)
 	}
 	defer pool.Close()
+	metrics.RegisterPgxPool(pool)
 	if cfg.NATSURL == "" {
 		log.Fatal("NATS_URL is required")
 	}
@@ -54,7 +61,6 @@ func main() {
 	if e != nil {
 		log.Fatal(e)
 	}
-	logger := logging.New(cfg.ServiceName)
 	repo := repository.New(pool)
 	provider, e := platformemail.FromEnvironment(logger)
 	if e != nil {
@@ -66,35 +72,43 @@ func main() {
 	consumerDone := make(chan struct{})
 	go func() {
 		defer close(consumerDone)
-		consumer.NewWithConfigAndReminderOffsets(js, repo, logger, "APPOINTMENTS", "appointments.v1.appointment.*", "notification-email-v1", reminderSettings, recipients).Run(ctx)
+		consumer.NewWithConfigAndReminderOffsets(js, repo, logger, "APPOINTMENTS", "appointments.v1.appointment.*", "notification-email-v1", reminderSettings, recipients).WithObservability(tracer, metrics.Registerer()).Run(ctx)
 	}()
-	workerInstance := worker.New(repo, provider, logger)
+	workerInstance := worker.New(repo, provider, logger).WithObservability(metrics.Registerer())
 	workerDone := make(chan struct{})
 	go func() { defer close(workerDone); workerInstance.Run(ctx) }()
 	app := fiber.New()
 	app.Use(httpx.RequestID())
+	app.Use(otelsetup.Middleware(tracer))
+	app.Use(logging.HTTPCompletionMiddleware(logger))
+	app.Use(metrics.HTTPMiddleware())
+	app.Get("/metrics", metrics.Handler())
 	httpx.Health(app, func() error {
-		if e := platformdb.Ready(pool); e != nil {
-			return e
+		dbErr := platformdb.Ready(pool)
+		metrics.SetDependencyUp("postgres", dbErr == nil)
+		if dbErr != nil {
+			return dbErr
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		if _, e = js.AccountInfo(nats.Context(ctx)); e != nil {
-			return e
+		natsCtx, natsCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer natsCancel()
+		_, natsErr := js.AccountInfo(nats.Context(natsCtx))
+		metrics.SetDependencyUp("nats", natsErr == nil)
+		if natsErr != nil {
+			return natsErr
 		}
 		return nil
 	})
 	runErr := httpx.Run(app, cfg.Port, logger)
 	cancel()
-	shutdown, stopShutdown := context.WithTimeout(context.Background(), 10*time.Second)
-	defer stopShutdown()
+	drainCtx, stopDrain := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stopDrain()
 	for consumerDone != nil || workerDone != nil {
 		select {
 		case <-consumerDone:
 			consumerDone = nil
 		case <-workerDone:
 			workerDone = nil
-		case <-shutdown.Done():
+		case <-drainCtx.Done():
 			consumerDone, workerDone = nil, nil
 		}
 	}

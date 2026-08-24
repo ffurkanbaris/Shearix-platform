@@ -203,6 +203,42 @@ Compose application healthchecks use `/ready`. Production infrastructure uses `r
 
 PostgreSQL pools default to 10 maximum and 1 minimum connection, with a one-hour lifetime, 15-minute idle limit, 30-second health period, and five-second connect timeout. Override these with `DB_MAX_CONNS`, `DB_MIN_CONNS`, `DB_MAX_CONN_LIFETIME`, `DB_MAX_CONN_IDLE_TIME`, `DB_HEALTH_CHECK_PERIOD`, and `DB_CONNECT_TIMEOUT`.
 
+## Observability (dev-only)
+
+Every backend service exposes a private Prometheus `/metrics` endpoint on
+port 8080 (same port as its API), reachable only on the internal `private`
+Docker network. OpenTelemetry tracing is optional and off unless
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set (see `platform/otelsetup/otelsetup.go`);
+by default it is unset and every service falls back to a no-op tracer.
+
+A dev-only observability overlay adds Prometheus, an OpenTelemetry Collector,
+and Grafana on top of the base stack without changing it. Start it with:
+
+```sh
+make observability-up
+# or directly:
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+```
+
+- Prometheus: http://localhost:9090 (scrapes every backend service's
+  `:8080/metrics`; see `infrastructure/observability/prometheus.yml`).
+- Grafana: http://localhost:3002, dev-only login `admin` / `admin`
+  (`GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`, never for production) —
+  a "Barber SaaS Overview" dashboard is provisioned automatically, covering
+  HTTP traffic/errors/latency, DB pool usage, dependency health, outbox
+  backlog, NATS redelivery, and notification outcomes. Panels for metrics a
+  service doesn't emit yet show "No data" until that wiring lands.
+- OTEL Collector: receives OTLP/gRPC traces on `otel-collector:4317` inside
+  the `private` network and logs them via its `debug` exporter (no external
+  trace backend is wired up).
+
+3000 and 3001 are already used by `admin-web`/`booking-web` and 8080 by the
+gateway, so Prometheus and Grafana use 9090 and 3002 to avoid collisions.
+
+Tear the overlay down with `make observability-down` (or add `-v` to also
+drop its Prometheus/Grafana volumes). The base `docker compose up` is
+completely unaffected — nothing in the core stack depends on this overlay.
+
 ## Email notifications and credential delivery
 
 notification-service consumes appointment events and delivers appointment email through the configured email provider. Credential passwords do not pass through notification-service, Redis, or NATS. Auth-service and customer-service generate a random password, persist only its bcrypt hash, and submit the plaintext directly to the configured email sender from process memory. Development uses a metadata-only logging sender that never logs message bodies. Set EMAIL_PROVIDER=smtp, SMTP_ADDRESS, EMAIL_FROM, and optional SMTP_USERNAME, SMTP_PASSWORD, SMTP_IMPLICIT_TLS for production. New and reset credentials require a password change after login.

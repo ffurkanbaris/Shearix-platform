@@ -1,0 +1,12 @@
+# Dev-only Grafana datasource provisioning for the observability overlay
+# (docker-compose.observability.yml). Not used in production.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

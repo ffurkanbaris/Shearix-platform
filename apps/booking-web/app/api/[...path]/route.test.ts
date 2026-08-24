@@ -5,7 +5,6 @@ import { proxyGateway } from "../../../../shared/server-proxy";
 describe("booking Next.js proxy route wiring", () => {
   const originalFetch = global.fetch;
   afterEach(() => { global.fetch = originalFetch; vi.unstubAllEnvs(); });
-  const context = (path: string[]) => ({ params: Promise.resolve({ path }) });
 
   it("wires GET query and cookies through the actual route", async () => {
     const upstream = vi.fn().mockResolvedValue(new Response("ok", { status: 200, headers: { "content-type": "text/plain" } }));

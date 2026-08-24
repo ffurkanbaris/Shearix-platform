@@ -56,7 +56,7 @@ func (r Repository) CancelReminders(ctx context.Context, tenant, appointment uui
 	})
 }
 func (r Repository) Claim(ctx context.Context, limit int) ([]domain.Notification, error) {
-	rows, err := r.pool.Query(ctx, `SELECT id,tenant_id,appointment_id,notification_type,recipient_email,template_name,template_language,attempt_count,claim_token FROM public.claim_email_notifications($1)`, limit)
+	rows, err := r.pool.Query(ctx, `SELECT id,tenant_id,appointment_id,notification_type,recipient_email,template_name,template_language,attempt_count,claim_token,recovered FROM public.claim_email_notifications($1)`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +64,7 @@ func (r Repository) Claim(ctx context.Context, limit int) ([]domain.Notification
 	items := []domain.Notification{}
 	for rows.Next() {
 		var item domain.Notification
-		if err = rows.Scan(&item.ID, &item.TenantID, &item.AppointmentID, &item.Type, &item.Email, &item.Template, &item.Language, &item.Attempts, &item.ClaimToken); err != nil {
+		if err = rows.Scan(&item.ID, &item.TenantID, &item.AppointmentID, &item.Type, &item.Email, &item.Template, &item.Language, &item.Attempts, &item.ClaimToken, &item.Recovered); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

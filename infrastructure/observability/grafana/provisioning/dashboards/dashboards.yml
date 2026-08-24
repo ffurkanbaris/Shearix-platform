@@ -1,0 +1,15 @@
+# Dev-only Grafana dashboard provider config for the observability overlay
+# (docker-compose.observability.yml). Not used in production.
+apiVersion: 1
+
+providers:
+  - name: barber-saas
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

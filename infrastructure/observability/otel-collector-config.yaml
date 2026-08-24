@@ -1,0 +1,24 @@
+# Dev-only OpenTelemetry Collector config for the observability overlay
+# (docker-compose.observability.yml). Receives OTLP/gRPC traces from every
+# backend service (when OTEL_EXPORTER_OTLP_ENDPOINT is set) and logs them via
+# the debug exporter. No external trace backend (Jaeger/Tempo) is wired up —
+# this is intentionally minimal, since dashboards live in Grafana/Prometheus.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+exporters:
+  debug:
+    verbosity: normal
+
+processors:
+  batch: {}
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

@@ -6,8 +6,13 @@ import (
 	"errors"
 	"github.com/barber-appointment/notification-service/internal/domain"
 	"github.com/barber-appointment/notification-service/internal/repository"
+	"github.com/barber-appointment/platform/otelsetup"
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 	"log/slog"
 	"os"
 	"strconv"
@@ -41,6 +46,49 @@ type Consumer struct {
 	offsets    reminderOffsetsProvider
 	recipients RecipientResolver
 	maxDeliver int
+	tracer     trace.Tracer
+	metrics    *metrics
+}
+
+// metrics holds this package's domain Prometheus collectors. All labels are
+// bounded (notification_type is drawn from a fixed, small enum) — never a
+// tenant, event, or notification ID.
+type metrics struct {
+	planned     *prometheus.CounterVec
+	redelivered prometheus.Counter
+	terminal    prometheus.Counter
+}
+
+// newMetrics registers this package's counters on reg. Callers must invoke
+// this at most once per registerer (e.g. once per process, via
+// Consumer.WithObservability during startup) — registering the same metric
+// name twice on the same registry panics.
+func newMetrics(reg prometheus.Registerer) *metrics {
+	return &metrics{
+		planned: promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+			Name: "notification_planned_total",
+			Help: "Notifications newly planned (created, not a dedup no-op), by notification_type.",
+		}, []string{"notification_type"}),
+		redelivered: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+			Name: "nats_messages_redelivered_total",
+			Help: "JetStream messages observed with NumDelivered > 1 (a redelivery, not a first attempt).",
+		}),
+		terminal: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+			Name: "nats_messages_terminal_total",
+			Help: "JetStream messages Term()'d after exhausting MaxDeliver (poison messages).",
+		}),
+	}
+}
+
+// WithObservability attaches a tracer (consumer spans continuing the
+// publisher's trace via propagated NATS headers) and a Prometheus registerer
+// (domain counters) to the consumer. Both are optional: an unconfigured
+// Consumer keeps working exactly as before, using otel's default no-op
+// tracer and recording no domain metrics.
+func (c Consumer) WithObservability(tracer trace.Tracer, reg prometheus.Registerer) Consumer {
+	c.tracer = tracer
+	c.metrics = newMetrics(reg)
+	return c
 }
 
 // reminderOffsetsProvider keeps reminder configuration tenant-aware without
@@ -72,7 +120,7 @@ func NewWithConfigAndReminderOffsets(js nats.JetStreamContext, r repository.Repo
 	if provider == nil {
 		provider = staticOffsets(offsets())
 	}
-	consumer := Consumer{js: js, r: r, log: l, stream: stream, subject: subject, durable: durable, templates: map[string]string{"appointment.created": env("EMAIL_TEMPLATE_APPOINTMENT_CREATED", "appointment_created"), "appointment.rescheduled": env("EMAIL_TEMPLATE_APPOINTMENT_RESCHEDULED", "appointment_rescheduled"), "appointment.cancelled": env("EMAIL_TEMPLATE_APPOINTMENT_CANCELLED", "appointment_cancelled"), "appointment.confirmed": env("EMAIL_TEMPLATE_APPOINTMENT_CONFIRMED", "appointment_confirmed"), "appointment.reminder_due": env("EMAIL_TEMPLATE_APPOINTMENT_REMINDER", "appointment_reminder")}, language: env("EMAIL_TEMPLATE_LANGUAGE", "en"), offsets: provider, maxDeliver: maxDeliverFromEnv()}
+	consumer := Consumer{js: js, r: r, log: l, stream: stream, subject: subject, durable: durable, templates: map[string]string{"appointment.created": env("EMAIL_TEMPLATE_APPOINTMENT_CREATED", "appointment_created"), "appointment.rescheduled": env("EMAIL_TEMPLATE_APPOINTMENT_RESCHEDULED", "appointment_rescheduled"), "appointment.cancelled": env("EMAIL_TEMPLATE_APPOINTMENT_CANCELLED", "appointment_cancelled"), "appointment.confirmed": env("EMAIL_TEMPLATE_APPOINTMENT_CONFIRMED", "appointment_confirmed"), "appointment.reminder_due": env("EMAIL_TEMPLATE_APPOINTMENT_REMINDER", "appointment_reminder")}, language: env("EMAIL_TEMPLATE_LANGUAGE", "en"), offsets: provider, maxDeliver: maxDeliverFromEnv(), tracer: otel.Tracer("notification-service-consumer")}
 	if len(resolvers) > 0 {
 		consumer.recipients = resolvers[0]
 	}
@@ -140,17 +188,27 @@ func (c Consumer) Run(ctx context.Context) {
 			continue
 		}
 		for _, msg := range msgs {
-			handleErr := c.handle(ctx, msg)
+			if meta, metaErr := msg.Metadata(); metaErr == nil && meta.NumDelivered > 1 && c.metrics != nil {
+				c.metrics.redelivered.Inc()
+			}
+			spanCtx, span := otelsetup.StartConsumerSpan(ctx, c.tracer, msg, "notification.consume")
+			handleErr := c.handle(spanCtx, msg)
 			if handleErr == nil {
+				span.End()
 				_ = msg.Ack()
 				continue
 			}
 			if meta, metaErr := msg.Metadata(); metaErr == nil && c.maxDeliver > 0 && meta.NumDelivered >= uint64(c.maxDeliver) {
 				c.log.Error("notification message exhausted delivery attempts; terminating", "error", handleErr, "num_delivered", meta.NumDelivered, "max_deliver", c.maxDeliver, "subject", msg.Subject)
-				c.markTerminal(ctx, msg, handleErr)
+				c.markTerminal(spanCtx, msg, handleErr)
+				if c.metrics != nil {
+					c.metrics.terminal.Inc()
+				}
+				span.End()
 				_ = msg.Term()
 				continue
 			}
+			span.End()
 			c.log.Warn("notification handling failed; will retry", "error", handleErr, "subject", msg.Subject)
 			_ = msg.NakWithDelay(time.Second)
 		}
@@ -180,8 +238,13 @@ func (c Consumer) handle(ctx context.Context, m *nats.Msg) error {
 	if err != nil {
 		return err
 	}
-	if _, err := c.r.Plan(ctx, e.TenantID, e, mapType(e.EventType), recipient, tmpl, c.language, time.Now().UTC()); err != nil {
+	kind := mapType(e.EventType)
+	created, err := c.r.Plan(ctx, e.TenantID, e, kind, recipient, tmpl, c.language, time.Now().UTC())
+	if err != nil {
 		return err
+	}
+	if created && c.metrics != nil {
+		c.metrics.planned.WithLabelValues(kind).Inc()
 	}
 	if e.EventType == "appointment.rescheduled" || e.EventType == "appointment.cancelled" {
 		if err := c.r.CancelReminders(ctx, e.TenantID, e.AggregateID); err != nil {
@@ -204,9 +267,12 @@ func (c Consumer) handle(ctx context.Context, m *nats.Msg) error {
 			}
 			rem := e
 			rem.EventID = uuid.NewSHA1(e.EventID, []byte(off.String()))
-			_, err := c.r.Plan(ctx, e.TenantID, rem, "appointment_reminder", recipient, c.templates["appointment.reminder_due"], c.language, scheduledAt)
+			reminderCreated, err := c.r.Plan(ctx, e.TenantID, rem, "appointment_reminder", recipient, c.templates["appointment.reminder_due"], c.language, scheduledAt)
 			if err != nil {
 				return err
+			}
+			if reminderCreated && c.metrics != nil {
+				c.metrics.planned.WithLabelValues("appointment_reminder").Inc()
 			}
 		}
 	}

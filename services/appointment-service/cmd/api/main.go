@@ -17,6 +17,8 @@ import (
 	"github.com/barber-appointment/platform/internalauth"
 	"github.com/barber-appointment/platform/logging"
 	"github.com/barber-appointment/platform/migrate"
+	"github.com/barber-appointment/platform/obsmetrics"
+	"github.com/barber-appointment/platform/otelsetup"
 	"github.com/barber-appointment/platform/schedulingdeps"
 	"github.com/gofiber/fiber/v3"
 	"log"
@@ -37,12 +39,16 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatal(err)
 	}
-	pool, err := platformdb.OpenPool(context.Background(), cfg.DatabaseURL)
+	logger := logging.New(cfg.ServiceName)
+	tracer, shutdown := otelsetup.Init(context.Background(), cfg.ServiceName, logger)
+	defer shutdown(context.Background())
+	metrics := obsmetrics.New(cfg.ServiceName)
+	pool, err := platformdb.OpenPool(context.Background(), cfg.DatabaseURL, platformdb.WithTracer(otelsetup.PGXTracer(tracer)))
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer pool.Close()
-	logger := logging.New(cfg.ServiceName)
+	metrics.RegisterPgxPool(pool)
 	if cfg.NATSURL == "" {
 		log.Fatal("NATS_URL is required")
 	}
@@ -50,7 +56,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	publisher, err := outbox.New(repository.New(pool), connection, logger)
+	publisher, err := outbox.New(repository.New(pool), connection, logger, tracer, metrics.Registerer())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -58,13 +64,21 @@ func main() {
 	publisher.Start(runtimeCtx)
 	app := fiber.New()
 	app.Use(httpx.RequestID())
+	app.Use(otelsetup.Middleware(tracer))
+	app.Use(logging.HTTPCompletionMiddleware(logger))
+	app.Use(metrics.HTTPMiddleware())
+	app.Get("/metrics", metrics.Handler())
 	httpx.Health(app, func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		if err := pool.Ping(ctx); err != nil {
-			return err
+		dbErr := pool.Ping(ctx)
+		metrics.SetDependencyUp("postgres", dbErr == nil)
+		natsUp := publisher.Ready()
+		metrics.SetDependencyUp("nats", natsUp)
+		if dbErr != nil {
+			return dbErr
 		}
-		if !publisher.Ready() {
+		if !natsUp {
 			return errors.New("NATS outbox publisher is not ready")
 		}
 		return nil

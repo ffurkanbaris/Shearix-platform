@@ -16,7 +16,29 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 )
+
+// counterValue reads the current total value of a counter (summed across all
+// its label combinations) off reg via a scrape (Gather).
+func counterValue(t *testing.T, reg *prometheus.Registry, name string) float64 {
+	t.Helper()
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		var total float64
+		for _, m := range family.GetMetric() {
+			total += m.GetCounter().GetValue()
+		}
+		return total
+	}
+	return 0
+}
 
 type scriptedSender struct {
 	errors  []error
@@ -96,7 +118,8 @@ func TestNotificationProviderReliabilityIntegration(t *testing.T) {
 			platformemail.TemporaryError{Err: errors.New("provider detail one")},
 			platformemail.TemporaryError{Err: errors.New("provider detail two")},
 		}, message: "final-provider-message"}
-		w := worker.New(repo, sender, logger)
+		registry := prometheus.NewRegistry()
+		w := worker.New(repo, sender, logger).WithObservability(registry)
 		w.Once(ctx)
 		makeDue(id)
 		w.Once(ctx)
@@ -106,15 +129,32 @@ func TestNotificationProviderReliabilityIntegration(t *testing.T) {
 		if sender.calls != 3 || status != "sent" || attempts != 3 || problem != "" || messageID == nil || *messageID != "final-provider-message" {
 			t.Fatalf("calls=%d status=%s attempts=%d problem=%q message=%v", sender.calls, status, attempts, problem, messageID)
 		}
+		// Two temporary failures scheduled a retry each; the final attempt sent.
+		if got := counterValue(t, registry, "notification_retried_total"); got != 2 {
+			t.Fatalf("notification_retried_total = %v, want 2", got)
+		}
+		if got := counterValue(t, registry, "notification_sent_total"); got != 1 {
+			t.Fatalf("notification_sent_total = %v, want 1", got)
+		}
+		if got := counterValue(t, registry, "notification_failed_total"); got != 0 {
+			t.Fatalf("notification_failed_total = %v, want 0", got)
+		}
 	})
 
 	t.Run("permanent failure is bounded and sanitized", func(t *testing.T) {
 		id := plan()
 		sender := &scriptedSender{errors: []error{errors.New("secret provider diagnostic")}}
-		worker.New(repo, sender, logger).Once(ctx)
+		registry := prometheus.NewRegistry()
+		worker.New(repo, sender, logger).WithObservability(registry).Once(ctx)
 		status, attempts, problem, messageID := state(id)
 		if sender.calls != 1 || status != "failed" || attempts != 1 || problem != "email delivery failed" || messageID != nil {
 			t.Fatalf("calls=%d status=%s attempts=%d problem=%q message=%v", sender.calls, status, attempts, problem, messageID)
+		}
+		if got := counterValue(t, registry, "notification_failed_total"); got != 1 {
+			t.Fatalf("notification_failed_total = %v, want 1", got)
+		}
+		if got := counterValue(t, registry, "notification_sent_total"); got != 0 {
+			t.Fatalf("notification_sent_total = %v, want 0", got)
 		}
 	})
 

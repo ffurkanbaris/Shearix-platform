@@ -1,0 +1,87 @@
+# Dev-only observability overlay: Prometheus, OpenTelemetry Collector, and
+# Grafana, plus OTEL_EXPORTER_OTLP_ENDPOINT for every backend service. Never
+# used in production and never referenced from
+# infrastructure/caddy/docker-compose.production.yml. Use with:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+#
+# The base docker-compose.yml remains fully self-sufficient; nothing in the
+# core stack depends on any service defined here.
+services:
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes:
+      - ./infrastructure/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports: ["9090:9090"]
+    networks: [public, private]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.108.0
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./infrastructure/observability/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    networks: [private]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      # Dev-only default credentials. NEVER use these in production; set a
+      # real GF_SECURITY_ADMIN_PASSWORD (and disable admin login as needed)
+      # for any non-local deployment.
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./infrastructure/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infrastructure/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on: {prometheus: {condition: service_started}}
+    ports: ["3002:3000"]
+    networks: [public, private]
+
+  # --- OTEL_EXPORTER_OTLP_ENDPOINT wiring -----------------------------------
+  # Adds the collector endpoint to every service's environment via Compose's
+  # same-named-service merge; the base docker-compose.yml is untouched. Unset
+  # (base stack default) means otelsetup.Init falls back to a no-op tracer,
+  # so this only takes effect when this overlay is applied.
+  gateway-service:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+    depends_on: {otel-collector: {condition: service_started}}
+  tenant-service:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+    depends_on: {otel-collector: {condition: service_started}}
+  auth-service:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+    depends_on: {otel-collector: {condition: service_started}}
+  barber-service:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+    depends_on: {otel-collector: {condition: service_started}}
+  catalog-service:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+    depends_on: {otel-collector: {condition: service_started}}
+  scheduling-service:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+    depends_on: {otel-collector: {condition: service_started}}
+  appointment-service:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+    depends_on: {otel-collector: {condition: service_started}}
+  customer-service:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+    depends_on: {otel-collector: {condition: service_started}}
+  notification-service:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+    depends_on: {otel-collector: {condition: service_started}}
+
+volumes:
+  prometheus_data: {}
+  grafana_data: {}

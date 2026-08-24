@@ -19,6 +19,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 type failingRecipientResolver struct{}
@@ -92,11 +95,18 @@ func TestJetStreamPlanningIntegration(t *testing.T) {
 	defer func() { _, _ = owner.Exec(ctx, `DELETE FROM public.email_notifications WHERE tenant_id=$1`, tenant) }()
 	r := repository.New(pool)
 	settings := &tenantOffsets{values: map[uuid.UUID][]time.Duration{tenant: []time.Duration{3 * time.Hour}}}
+
+	spanRecorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()), sdktrace.WithSpanProcessor(spanRecorder))
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+	tracer := tp.Tracer("consumer-test")
+	registry := prometheus.NewRegistry()
+
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		consumer.NewWithConfigAndReminderOffsets(js, r, slog.New(slog.NewTextHandler(io.Discard, nil)), stream, subject, durable, settings, testRecipientResolver{}).Run(runCtx)
+		consumer.NewWithConfigAndReminderOffsets(js, r, slog.New(slog.NewTextHandler(io.Discard, nil)), stream, subject, durable, settings, testRecipientResolver{}).WithObservability(tracer, registry).Run(runCtx)
 	}()
 	defer func() {
 		cancel()
@@ -143,6 +153,12 @@ func TestJetStreamPlanningIntegration(t *testing.T) {
 	if err = owner.QueryRow(ctx, `SELECT count(*) FROM public.email_notifications WHERE tenant_id=$1 AND event_id=$2`, tenant, eventID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("duplicate planning count=%d err=%v", count, err)
 	}
+	// The dedup replay above (ON CONFLICT DO NOTHING) must not double-count
+	// notification_planned_total: the first "appointment_created" delivery
+	// created a row (created=true), the replay did not (created=false).
+	if got := counterValueForLabel(t, registry, "notification_planned_total", "notification_type", "appointment_created"); got != 1 {
+		t.Fatalf("notification_planned_total{appointment_created} = %v, want 1 (dedup replay must not increment it)", got)
+	}
 
 	// Settings are read when each new appointment is planned rather than at
 	// consumer startup. Updating the tenant offset changes only future reminder
@@ -185,6 +201,69 @@ func TestJetStreamPlanningIntegration(t *testing.T) {
 		info, e := js.ConsumerInfo(stream, durable)
 		return e == nil && info.Delivered.Consumer > beforeFailure.Delivered.Consumer && info.AckFloor.Consumer == beforeFailure.AckFloor.Consumer
 	})
+
+	// The unacknowledged message above is NakWithDelay'd, so JetStream
+	// redelivers it (NumDelivered > 1 on the second handling attempt). That
+	// second delivery must be observable both as a Prometheus counter and as
+	// a recorded consumer span.
+	waitFor(t, 7*time.Second, func() bool {
+		info, e := js.ConsumerInfo(stream, durable)
+		return e == nil && info.Delivered.Consumer >= beforeFailure.Delivered.Consumer+2
+	})
+	waitFor(t, 7*time.Second, func() bool {
+		return counterValue(t, registry, "nats_messages_redelivered_total") >= 1
+	})
+	consumerSpans := 0
+	for _, span := range spanRecorder.Ended() {
+		if span.Name() == "notification.consume" {
+			consumerSpans++
+		}
+	}
+	if consumerSpans == 0 {
+		t.Fatal("expected at least one recorded notification.consume consumer span")
+	}
+}
+
+// counterValue reads the current total value of a counter (summed across all
+// its label combinations) off reg via a scrape (Gather), for assertions
+// against a real registry rather than a reference to the internal collector.
+func counterValue(t *testing.T, reg *prometheus.Registry, name string) float64 {
+	t.Helper()
+	return counterValueForLabel(t, reg, name, "", "")
+}
+
+// counterValueForLabel reads a single label combination's value from a
+// CounterVec metric. Pass labelName == "" to sum across all label values
+// (equivalent to counterValue).
+func counterValueForLabel(t *testing.T, reg *prometheus.Registry, name, labelName, labelValue string) float64 {
+	t.Helper()
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		var total float64
+		for _, m := range family.GetMetric() {
+			if labelName != "" {
+				matched := false
+				for _, lp := range m.GetLabel() {
+					if lp.GetName() == labelName && lp.GetValue() == labelValue {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					continue
+				}
+			}
+			total += m.GetCounter().GetValue()
+		}
+		return total
+	}
+	return 0
 }
 
 func TestJetStreamConsumerRestartAndRecipientRecoveryIntegration(t *testing.T) {

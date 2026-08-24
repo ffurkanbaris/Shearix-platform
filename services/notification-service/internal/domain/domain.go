@@ -25,4 +25,10 @@ type Notification struct {
 	Template      string
 	Language      string
 	Attempts      int
+	// Recovered is true when this claim reclaimed a row whose previous lease
+	// had already expired (i.e. a prior worker crashed or stalled mid-send),
+	// and false for a claim of a fresh 'pending' row. Populated by
+	// claim_email_notifications' RETURNING clause; observability-only, never
+	// used for delivery/fencing decisions.
+	Recovered bool
 }

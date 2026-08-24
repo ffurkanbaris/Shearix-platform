@@ -43,12 +43,21 @@ func TestNotificationClaimFencingIntegration(t *testing.T) {
 	if err != nil || len(first) != 1 {
 		t.Fatalf("first claim len=%d err=%v", len(first), err)
 	}
+	// A fresh claim of a 'pending' row must not be reported as recovered.
+	if first[0].Recovered {
+		t.Fatalf("fresh claim incorrectly reported as recovered")
+	}
 	if _, err = owner.Exec(ctx, `UPDATE public.email_notifications SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1`, first[0].ID); err != nil {
 		t.Fatal(err)
 	}
 	second, err := repo.Claim(ctx, 1)
 	if err != nil || len(second) != 1 || second[0].ClaimToken == first[0].ClaimToken {
 		t.Fatalf("reclaim len=%d err=%v", len(second), err)
+	}
+	// The second claim reclaimed a row whose lease had expired (the first
+	// worker never finished) - this must be reported as recovered.
+	if !second[0].Recovered {
+		t.Fatalf("expired-lease reclaim was not reported as recovered")
 	}
 	if err = repo.Finish(ctx, first[0].ID, first[0].ClaimToken, "stale-message", "", nil); err != nil {
 		t.Fatal(err)

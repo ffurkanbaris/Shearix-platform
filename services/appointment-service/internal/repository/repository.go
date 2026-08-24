@@ -279,9 +279,28 @@ func (r Repository) MarkOutboxPublished(ctx context.Context, id uuid.UUID) error
 	_, err := r.pool.Exec(ctx, `SELECT public.mark_outbox_event_published($1)`, id)
 	return err
 }
-func (r Repository) ReleaseOutbox(ctx context.Context, id uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `SELECT public.release_outbox_event($1)`, id)
-	return err
+
+// ReleaseOutbox reclaims a failed publish attempt back onto the outbox queue
+// (or, once the bounded-retry threshold in release_outbox_event is crossed,
+// marks the row terminal via failed_at). It reports the resulting attempt
+// count and whether this call is the one that pushed the row terminal, so
+// callers can distinguish "still retrying" from "just went terminal" without
+// a second query.
+func (r Repository) ReleaseOutbox(ctx context.Context, id uuid.UUID) (attempts int, terminal bool, err error) {
+	err = r.pool.QueryRow(ctx, `SELECT publish_attempts, failed_at IS NOT NULL FROM public.release_outbox_event($1)`, id).Scan(&attempts, &terminal)
+	return attempts, terminal, err
+}
+
+// OutboxBacklogStats reports the count and age of the oldest pending
+// (unpublished, non-terminal) outbox row, for the outbox_backlog and
+// outbox_oldest_pending_age_seconds gauges.
+func (r Repository) OutboxBacklogStats(ctx context.Context) (count int, oldestPendingAge time.Duration, err error) {
+	var ageSeconds float64
+	err = r.pool.QueryRow(ctx, `SELECT count(*), COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at))), 0) FROM public.outbox_events WHERE published_at IS NULL AND failed_at IS NULL`).Scan(&count, &ageSeconds)
+	if err != nil {
+		return 0, 0, err
+	}
+	return count, time.Duration(ageSeconds * float64(time.Second)), nil
 }
 
 func (r Repository) CleanupRetention(ctx context.Context, limit int) (int, int, error) {

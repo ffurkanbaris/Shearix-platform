@@ -1,6 +1,6 @@
 .PHONY: build test test-race test-integration test-migrations sqlc sqlc-check \
 	verify verify-go-static verify-go-tests verify-frontends verify-compose \
-	verify-migrations ci compose-up compose-down
+	verify-migrations ci compose-up compose-down observability-up observability-down
 
 build:
 	./scripts/ci/go-modules.sh build
@@ -53,3 +53,11 @@ compose-up:
 
 compose-down:
 	docker compose down
+
+# Dev-only observability overlay (Prometheus, OTEL Collector, Grafana). See
+# docker-compose.observability.yml and README.md for details.
+observability-up:
+	docker compose -f docker-compose.yml -f docker-compose.observability.yml up --build -d
+
+observability-down:
+	docker compose -f docker-compose.yml -f docker-compose.observability.yml down
