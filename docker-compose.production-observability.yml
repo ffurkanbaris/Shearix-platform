@@ -24,7 +24,7 @@ services:
         chmod 0400 /alertmanager/config/alertmanager.yml
         chown -R 10001:10001 /tempo /loki
         chown -R 472:472 /grafana
-        chown -R 473:473 /alloy
+        chown -R 0:0 /alloy
     volumes:
       - prometheus_data:/prometheus
       - alertmanager_data:/alertmanager

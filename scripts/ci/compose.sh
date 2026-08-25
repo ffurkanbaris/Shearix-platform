@@ -76,6 +76,10 @@ printf '%s\n' "$init_block" | grep -q 'chmod 0400' || {
   echo "staged Alertmanager secret is not read-only" >&2
   exit 1
 }
+printf '%s\n' "$init_block" | grep -q 'chown -R 0:0 /alloy' || {
+  echo "Alloy bookmark volume ownership does not match its hardened runtime user" >&2
+  exit 1
+}
 
 # The local edge must route the operator hostname directly, while its catch-all
 # keeps tenant hostnames on gateway-service.
