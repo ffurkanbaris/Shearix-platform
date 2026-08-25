@@ -31,7 +31,7 @@ case "${RESTIC_REPOSITORY-}" in
   gs:*) require_value GOOGLE_PROJECT_ID ;;
   *) require_value AWS_ACCESS_KEY_ID; require_value AWS_SECRET_ACCESS_KEY ;;
 esac
-for name in IMAGE_REGISTRY RELEASE_TAG PRODUCTION_IMAGE_LOCK_FILE EMAIL_PROVIDER EMAIL_FROM SMTP_ADDRESS CADDY_ACME_EMAIL SAAS_DOMAIN PLATFORM_ADMIN_HOST PLATFORM_ADMIN_EMAIL GRAFANA_ADMIN_USER ALERTMANAGER_CONFIG_FILE PRODUCTION_DOMAINS EXPECTED_PUBLIC_IP PRODUCTION_DATA_ROOT RESTIC_REPOSITORY BACKUP_HEARTBEAT_URL BACKUP_VERIFY_HEARTBEAT_URL BACKUP_STAGING_ROOT BACKUP_COMPOSE_PROJECT BACKUP_COMPOSE_FILES; do require_value "$name"; done
+for name in IMAGE_REGISTRY RELEASE_TAG PRODUCTION_IMAGE_LOCK_FILE EMAIL_PROVIDER EMAIL_FROM SMTP_ADDRESS CADDY_ACME_EMAIL SAAS_DOMAIN PLATFORM_ADMIN_HOST PLATFORM_ADMIN_EMAIL GRAFANA_ADMIN_USER ALERTMANAGER_CONFIG_FILE PRODUCTION_DOMAINS EXPECTED_PUBLIC_IP PRODUCTION_DATA_ROOT RESTIC_REPOSITORY RESTIC_IMAGE BACKUP_POSTGRES_IMAGE BACKUP_NATS_IMAGE BACKUP_HEARTBEAT_URL BACKUP_VERIFY_HEARTBEAT_URL BACKUP_STAGING_ROOT BACKUP_COMPOSE_PROJECT BACKUP_COMPOSE_FILES; do require_value "$name"; done
 printf '%s' "$PLATFORM_ADMIN_PASSWORD_SCRYPT" | grep -Eq '^[0-9a-f]{32,}:[0-9a-f]{64}$' || fail "PLATFORM_ADMIN_PASSWORD_SCRYPT must be a valid salt:key pair"
 [ "${#PLATFORM_SESSION_SECRET}" -ge 32 ] || fail "PLATFORM_SESSION_SECRET must contain at least 32 characters"
 [ "${EMAIL_PROVIDER-}" = smtp ] || fail "EMAIL_PROVIDER must be smtp"
@@ -47,6 +47,16 @@ env_mode=$(stat -c '%a' "$env_file" 2>/dev/null || true)
 [ "$env_mode" = 600 ] || fail "production env file mode must be 600"
 if [ "$(id -u)" -eq 0 ]; then [ "$(stat -c '%u' "$env_file")" -eq 0 ] || fail "production env file must be owned by root"; fi
 pass "required configuration inventory checked"
+
+for name in RESTIC_IMAGE BACKUP_POSTGRES_IMAGE BACKUP_NATS_IMAGE; do
+  eval "image=\${$name-}"
+  printf '%s' "$image" | grep -Eq '@sha256:[0-9a-f]{64}$' || {
+    fail "$name must use an immutable digest"
+    continue
+  }
+  docker manifest inspect "$image" >/dev/null 2>&1 || fail "$name digest is not readable from the configured registry"
+done
+pass "backup tool images checked"
 
 old_ifs=$IFS; IFS=,
 platform_domain_present=false

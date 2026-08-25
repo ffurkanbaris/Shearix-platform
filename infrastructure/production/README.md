@@ -94,8 +94,10 @@ to Loki; it does not mount the Docker socket.
    each initial tenant hostname separately.
 4. Configure registry pull credentials using a read-only production robot
    account.
-5. Install root-owned secret/config files and initialize the off-host restic
-   repository once with the pinned restic image. Configure distinct external
+5. Mirror the pinned Restic, PostgreSQL, and NATS backup tools into the private
+   registry, record their immutable digests in the production environment,
+   then install root-owned secret/config files and initialize the off-host
+   Restic repository. Configure distinct external
    heartbeat monitors for the hourly backup and weekly verification jobs.
 6. Install and enable the backup and verification timers from `systemd/`.
 7. Place the immutable release digest override on the host.

@@ -9,7 +9,7 @@ umask 077
 : "${BACKUP_VERIFY_ROOT:?BACKUP_VERIFY_ROOT is required}"
 : "${BACKUP_VERIFY_HEARTBEAT_URL:?BACKUP_VERIFY_HEARTBEAT_URL is required}"
 restic_image=${RESTIC_IMAGE:-restic/restic:0.18.0@sha256:4cf4a61ef9786f4de53e9de8c8f5c040f33830eb0a10bf3d614410ee2fcb6120}
-postgres_image=postgres:16.15-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+postgres_image=${BACKUP_POSTGRES_IMAGE:-postgres:16.15-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685}
 mkdir -p "$BACKUP_VERIFY_ROOT"
 chmod 700 "$BACKUP_VERIFY_ROOT"
 dest=$(mktemp -d "$BACKUP_VERIFY_ROOT/verify.XXXXXX")
