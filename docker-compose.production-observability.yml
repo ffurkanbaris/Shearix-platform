@@ -121,7 +121,11 @@ services:
       tempo: {condition: service_started}
       loki: {condition: service_started}
     ports: ["127.0.0.1:${GRAFANA_HOST_PORT:-3002}:3000"]
-    networks: [private]
+    # The internal-only network has no bridge gateway, so Docker cannot
+    # establish the loopback host-port binding from that network alone.
+    # Egress supplies the gateway while the explicit 127.0.0.1 bind keeps
+    # Grafana unavailable from the public interface.
+    networks: [private, egress]
 
   gateway-service: &otel-client
     environment: {OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317}

@@ -139,6 +139,15 @@ service_block grafana | grep -q 'host_ip: 127.0.0.1' || {
   echo "production Grafana is not bound to loopback" >&2
   exit 1
 }
+grafana_block=$(service_block grafana)
+printf '%s\n' "$grafana_block" | grep -q 'private' || {
+  echo "production Grafana lost its private network" >&2
+  exit 1
+}
+printf '%s\n' "$grafana_block" | grep -q 'egress' || {
+  echo "production Grafana cannot establish its loopback binding without a gateway network" >&2
+  exit 1
+}
 for service in gateway-service tenant-service auth-service barber-service catalog-service scheduling-service appointment-service customer-service notification-service; do
   service_block "$service" | grep -q 'OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317' || {
     echo "$service is not wired to the production OTEL collector" >&2
