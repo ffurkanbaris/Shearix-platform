@@ -97,6 +97,7 @@ services:
     # every capability is dropped, no-new-privileges is set, the rootfs is
     # read-only, and the Docker socket is never mounted.
     user: "0:0"
+    cap_add: ["DAC_READ_SEARCH"]
     volumes:
       - ./infrastructure/observability/production/config.alloy:/etc/alloy/config.alloy:ro
       - ${PRODUCTION_DATA_ROOT:?PRODUCTION_DATA_ROOT is required}/docker/containers:/var/lib/docker/containers:ro

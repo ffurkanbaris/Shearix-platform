@@ -149,8 +149,8 @@ printf '%s\n' "$alloy_block" | grep -Eq "user: ['\"]?0:0['\"]?" || {
   echo "production Alloy cannot traverse root-owned Docker log directories" >&2
   exit 1
 }
-if printf '%s\n' "$alloy_block" | grep -q 'DAC_READ_SEARCH'; then
-  echo "production Alloy retains an unnecessary filesystem capability" >&2
+if [ "$(printf '%s\n' "$alloy_block" | grep -c 'DAC_READ_SEARCH')" -ne 1 ]; then
+  echo "production Alloy must retain only its required Docker log read capability" >&2
   exit 1
 fi
 service_block grafana | grep -q 'host_ip: 127.0.0.1' || {
