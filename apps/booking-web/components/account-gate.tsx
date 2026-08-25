@@ -16,9 +16,9 @@ export function AccountGate({ children }: Readonly<{ children: React.ReactNode }
     }
   }, [customer?.must_change_password, pathname, router, sessionState]);
 
-  if (sessionState === "loading") return <main className="account-page"><p aria-live="polite">Loading your account…</p></main>;
-  if (sessionState === "error") return <main className="account-page"><p className="error" role="alert">Your session could not be checked. Please try again.</p><button type="button" onClick={() => void refresh()}>Retry</button></main>;
-  if (sessionState === "unauthenticated") return <main className="account-page"><p aria-live="polite">Redirecting to login…</p></main>;
-  if (customer?.must_change_password && pathname !== "/account/security") return <main className="account-page"><p aria-live="polite">Redirecting to password settings…</p></main>;
+  if (sessionState === "loading") return <main className="account-page"><p aria-live="polite">Hesabınız yükleniyor…</p></main>;
+  if (sessionState === "error") return <main className="account-page"><p className="error" role="alert">Oturumunuz kontrol edilemedi. Lütfen tekrar deneyin.</p><button type="button" onClick={() => void refresh()}>Tekrar dene</button></main>;
+  if (sessionState === "unauthenticated") return <main className="account-page"><p aria-live="polite">Giriş sayfasına yönlendiriliyorsunuz…</p></main>;
+  if (customer?.must_change_password && pathname !== "/account/security") return <main className="account-page"><p aria-live="polite">Şifre ayarlarına yönlendiriliyorsunuz…</p></main>;
   return <>{children}</>;
 }

@@ -170,6 +170,94 @@ func (r TenantRepository) Tenant(ctx context.Context, tenantID uuid.UUID) (domai
 	return domain.Tenant{ID: uuid.UUID(row.ID.Bytes), Name: row.Name, Status: row.Status, CreatedAt: row.CreatedAt.Time, Settings: settings}, nil
 }
 
+func (r TenantRepository) Tenants(ctx context.Context) ([]domain.Tenant, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id,name,status,created_at FROM public.tenants ORDER BY created_at DESC,id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []domain.Tenant{}
+	for rows.Next() {
+		var value domain.Tenant
+		if err = rows.Scan(&value.ID, &value.Name, &value.Status, &value.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, value)
+	}
+	return result, rows.Err()
+}
+
+func (r TenantRepository) SetTenantStatus(ctx context.Context, tenantID uuid.UUID, status, actor, requestID string) (domain.Tenant, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return domain.Tenant{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var result domain.Tenant
+	err = tx.QueryRow(ctx, `UPDATE public.tenants SET status=$2 WHERE id=$1 RETURNING id,name,status,created_at`, tenantID, status).Scan(&result.ID, &result.Name, &result.Status, &result.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Tenant{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.Tenant{}, err
+	}
+	// Domain resolution is cached by hostname. Load every hostname under the
+	// same transaction so both booking and admin cache entries can be evicted
+	// immediately after the lifecycle change commits.
+	if _, err = tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID.String()); err != nil {
+		return domain.Tenant{}, err
+	}
+	rows, err := tx.Query(ctx, `SELECT hostname FROM public.tenant_domains WHERE tenant_id=$1`, tenantID)
+	if err != nil {
+		return domain.Tenant{}, err
+	}
+	hostnames := []string{}
+	for rows.Next() {
+		var hostname string
+		if err = rows.Scan(&hostname); err != nil {
+			rows.Close()
+			return domain.Tenant{}, err
+		}
+		hostnames = append(hostnames, hostname)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return domain.Tenant{}, err
+	}
+	rows.Close()
+	if _, err = tx.Exec(ctx, `INSERT INTO public.platform_audit_log(actor,action,tenant_id,request_id,metadata) VALUES($1,$2,$3,$4,jsonb_build_object('status',$5::text))`, actor, "tenant."+status, tenantID, requestID, status); err != nil {
+		return domain.Tenant{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return domain.Tenant{}, err
+	}
+	for _, hostname := range hostnames {
+		r.invalidateDomain(ctx, hostname)
+	}
+	return result, nil
+}
+
+func (r TenantRepository) PlatformAudit(ctx context.Context, tenantID *uuid.UUID) ([]domain.PlatformAudit, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id,actor,action,tenant_id,request_id,metadata,created_at FROM public.platform_audit_log WHERE ($1::uuid IS NULL OR tenant_id=$1) ORDER BY created_at DESC LIMIT 200`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []domain.PlatformAudit{}
+	for rows.Next() {
+		var value domain.PlatformAudit
+		var raw []byte
+		if err = rows.Scan(&value.ID, &value.Actor, &value.Action, &value.TenantID, &value.RequestID, &raw, &value.CreatedAt); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(raw, &value.Metadata); err != nil {
+			return nil, err
+		}
+		result = append(result, value)
+	}
+	return result, rows.Err()
+}
+
 func (r TenantRepository) CreateDomain(ctx context.Context, tenantID uuid.UUID, hostname, domainType string, tokenHash []byte) (domain.TenantDomain, error) {
 	if _, err := r.activeTenant(ctx, tenantID); err != nil {
 		return domain.TenantDomain{}, err
@@ -189,8 +277,11 @@ func (r TenantRepository) CreateDomain(ctx context.Context, tenantID uuid.UUID, 
 }
 
 func (r TenantRepository) Domains(ctx context.Context, tenantID uuid.UUID) ([]domain.TenantDomain, error) {
-	if _, err := r.activeTenant(ctx, tenantID); err != nil {
-		return nil, err
+	// Platform operators must be able to inspect a suspended tenant's domains
+	// in order to diagnose and reinstate it. Only domain creation/activation
+	// requires an active tenant; this read path requires existence alone.
+	if _, err := generated.New(r.pool).GetTenant(ctx, pgUUID(tenantID)); err != nil {
+		return nil, translate(err)
 	}
 	var result []domain.TenantDomain
 	err := db.WithTenantTx(ctx, r.pool, tenantID, func(tx pgx.Tx) error {

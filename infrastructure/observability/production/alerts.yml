@@ -1,0 +1,31 @@
+groups:
+  - name: production-baseline
+    rules:
+      - alert: ServiceDown
+        expr: up{job="barber-services"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "Service metrics endpoint is down", description: "{{ $labels.instance }} has been unreachable for 2 minutes."}
+      - alert: DependencyDown
+        expr: dependency_up == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "Service dependency is down", description: "{{ $labels.service }} cannot reach {{ $labels.dependency }}."}
+      - alert: ElevatedHTTP5xx
+        expr: sum by (service) (rate(http_requests_total{status=~"5.."}[5m])) / clamp_min(sum by (service) (rate(http_requests_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Elevated server error rate", description: "{{ $labels.service }} has exceeded 5% HTTP 5xx responses for 10 minutes."}
+      - alert: AppointmentOutboxBacklog
+        expr: outbox_oldest_pending_age_seconds > 300 or outbox_backlog > 100
+        for: 10m
+        labels: {severity: critical}
+        annotations: {summary: "Appointment outbox is delayed", description: "Pending domain events are not being published promptly."}
+      - alert: TerminalDeliveryFailure
+        expr: (sum(increase(outbox_terminal_total[15m])) or vector(0)) + (sum(increase(nats_messages_terminal_total[15m])) or vector(0)) + (sum(increase(notification_failed_total[15m])) or vector(0)) > 0
+        labels: {severity: critical}
+        annotations: {summary: "A bounded delivery retry was exhausted", description: "Inspect appointment and notification service logs."}
+      - alert: PrometheusRuleEvaluationFailures
+        expr: increase(prometheus_rule_evaluation_failures_total[10m]) > 0
+        labels: {severity: warning}
+        annotations: {summary: "Prometheus rule evaluation failed"}

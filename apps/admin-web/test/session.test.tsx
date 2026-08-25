@@ -29,7 +29,7 @@ describe("admin session boundary", () => {
   it("keeps infrastructure failure distinct from unauthenticated", async () => {
     mocks.get.mockRejectedValue(new ApiError(503));
     render(<AuthGate><div>privileged workspace</div></AuthGate>);
-    await screen.findByRole("heading", { name: "Connection problem" });
+    await screen.findByRole("heading", { name: "Bağlantı sorunu" });
     expect(mocks.replace).not.toHaveBeenCalled();
   });
 

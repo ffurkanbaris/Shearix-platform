@@ -137,6 +137,26 @@ func (r Repository) Members(ctx context.Context, tenantID uuid.UUID) ([]domain.M
 	return members, err
 }
 
+func (r Repository) Owners(ctx context.Context, tenantID uuid.UUID) ([]domain.OwnerState, error) {
+	result := []domain.OwnerState{}
+	err := db.WithTenantTx(ctx, r.pool, tenantID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT i.id,COALESCE(i.name,''),i.email,i.status,m.status,c.must_change_password,c.initial_delivery_status FROM public.tenant_memberships m JOIN public.identities i ON i.id=m.identity_id JOIN public.credentials c ON c.identity_id=i.id WHERE m.tenant_id=$1 AND m.role='OWNER' ORDER BY i.email`, tenantID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var value domain.OwnerState
+			if err = rows.Scan(&value.IdentityID, &value.Name, &value.Email, &value.IdentityStatus, &value.MembershipStatus, &value.MustChangePassword, &value.DeliveryStatus); err != nil {
+				return err
+			}
+			result = append(result, value)
+		}
+		return rows.Err()
+	})
+	return result, err
+}
+
 func (r Repository) Member(ctx context.Context, tenantID, identityID uuid.UUID) (domain.Member, error) {
 	var member domain.Member
 	err := db.WithTenantTx(ctx, r.pool, tenantID, func(tx pgx.Tx) error {

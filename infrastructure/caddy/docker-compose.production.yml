@@ -28,8 +28,17 @@ x-baseline-hardening: &baseline-hardening
   security_opt: ["no-new-privileges:true"]
   cap_drop: ["ALL"]
 
+# Bound local Docker log growth on the production host. A centralized log
+# collector can consume the same JSON stdout stream without changing apps.
+x-production-logging: &production-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres:
+    logging: *production-logging
     # Not hardened with cap_drop/no-new-privileges: the official image's
     # entrypoint must run as root to chown the data directory and then
     # setuid/setgid to the postgres user on startup - verified empirically
@@ -56,6 +65,7 @@ services:
       CUSTOMER_DB_OWNER_PASSWORD: ${CUSTOMER_DB_OWNER_PASSWORD:?CUSTOMER_DB_OWNER_PASSWORD is required}
       CUSTOMER_DB_APP_PASSWORD: ${CUSTOMER_DB_APP_PASSWORD:?CUSTOMER_DB_APP_PASSWORD is required}
   redis:
+    logging: *production-logging
     # Not hardened with cap_drop/no-new-privileges: the official image's
     # entrypoint (via setpriv) must run as root to drop privileges to the
     # redis user on startup - verified empirically (cap_drop: [ALL] here
@@ -67,6 +77,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
   nats:
     <<: *baseline-hardening
+    logging: *production-logging
     restart: unless-stopped
     environment:
       NATS_USER: ${NATS_USER:?NATS_USER is required}
@@ -80,6 +91,13 @@ services:
     entrypoint: ["/bin/true"]
     command: !reset []
     volumes: !reset []
+  customer-seed:
+    # Development/demo customer credentials must never be loaded by the
+    # production graph. Keep the service present so base depends_on remains
+    # valid, but turn it into a side-effect-free successful one-shot.
+    entrypoint: ["/bin/true"]
+    command: !reset []
+    volumes: !reset []
 
   gateway-service:
     <<: *go-hardening
@@ -87,6 +105,7 @@ services:
     ports: !reset []
     networks: !override [private]
     restart: "on-failure:5"
+    logging: *production-logging
     environment:
       APP_ENV: production
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
@@ -97,16 +116,35 @@ services:
     ports: !reset []
     networks: !override [private]
     restart: "on-failure:5"
+    logging: *production-logging
 
   booking-web:
     <<: *baseline-hardening
     ports: !reset []
     networks: !override [private]
     restart: "on-failure:5"
+    logging: *production-logging
+
+  platform-admin-web:
+    <<: *baseline-hardening
+    ports: !reset []
+    networks: !override [private]
+    restart: "on-failure:5"
+    logging: *production-logging
+    environment:
+      GATEWAY_URL: http://gateway-service:8080
+      PLATFORM_ADMIN_TOKEN: ${PLATFORM_ADMIN_TOKEN:?PLATFORM_ADMIN_TOKEN is required}
+      PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:?PLATFORM_ADMIN_EMAIL is required}
+      PLATFORM_ADMIN_PASSWORD_SCRYPT: ${PLATFORM_ADMIN_PASSWORD_SCRYPT:?PLATFORM_ADMIN_PASSWORD_SCRYPT is required}
+      PLATFORM_SESSION_SECRET: ${PLATFORM_SESSION_SECRET:?PLATFORM_SESSION_SECRET is required}
+      PLATFORM_COOKIE_SECURE: "true"
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
 
   auth-service:
     <<: *go-hardening
     restart: "on-failure:5"
+    logging: *production-logging
+    networks: !override [private, egress]
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql://auth_db_app:${AUTH_DB_APP_PASSWORD:?AUTH_DB_APP_PASSWORD is required}@postgres:5432/auth_db?sslmode=disable
@@ -118,12 +156,15 @@ services:
       SMTP_ADDRESS: ${SMTP_ADDRESS:?SMTP_ADDRESS is required}
       SMTP_USERNAME: ${SMTP_USERNAME:?SMTP_USERNAME is required}
       SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD is required}
+      SMTP_IMPLICIT_TLS: ${SMTP_IMPLICIT_TLS:-false}
+      SMTP_TIMEOUT: ${SMTP_TIMEOUT:-10s}
       AUTH_COOKIE_NAME: __Host-barber_session
       AUTH_COOKIE_SECURE: "true"
 
   tenant-service:
     <<: *go-hardening
     restart: "on-failure:5"
+    logging: *production-logging
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql://tenant_db_app:${TENANT_DB_APP_PASSWORD:?TENANT_DB_APP_PASSWORD is required}@postgres:5432/tenant_db?sslmode=disable
@@ -133,6 +174,7 @@ services:
   barber-service:
     <<: *go-hardening
     restart: "on-failure:5"
+    logging: *production-logging
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql://barber_db_app:${BARBER_DB_APP_PASSWORD:?BARBER_DB_APP_PASSWORD is required}@postgres:5432/barber_db?sslmode=disable
@@ -141,6 +183,7 @@ services:
   catalog-service:
     <<: *go-hardening
     restart: "on-failure:5"
+    logging: *production-logging
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql://catalog_db_app:${CATALOG_DB_APP_PASSWORD:?CATALOG_DB_APP_PASSWORD is required}@postgres:5432/catalog_db?sslmode=disable
@@ -149,6 +192,7 @@ services:
   scheduling-service:
     <<: *go-hardening
     restart: "on-failure:5"
+    logging: *production-logging
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql://scheduling_db_app:${SCHEDULING_DB_APP_PASSWORD:?SCHEDULING_DB_APP_PASSWORD is required}@postgres:5432/scheduling_db?sslmode=disable
@@ -157,6 +201,7 @@ services:
   appointment-service:
     <<: *go-hardening
     restart: "on-failure:5"
+    logging: *production-logging
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql://appointment_db_app:${APPOINTMENT_DB_APP_PASSWORD:?APPOINTMENT_DB_APP_PASSWORD is required}@postgres:5432/appointment_db?sslmode=disable
@@ -166,6 +211,8 @@ services:
   customer-service:
     <<: *go-hardening
     restart: "on-failure:5"
+    logging: *production-logging
+    networks: !override [private, egress]
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql://customer_db_app:${CUSTOMER_DB_APP_PASSWORD:?CUSTOMER_DB_APP_PASSWORD is required}@postgres:5432/customer_db?sslmode=disable
@@ -177,9 +224,13 @@ services:
       SMTP_ADDRESS: ${SMTP_ADDRESS:?SMTP_ADDRESS is required}
       SMTP_USERNAME: ${SMTP_USERNAME:?SMTP_USERNAME is required}
       SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD is required}
+      SMTP_IMPLICIT_TLS: ${SMTP_IMPLICIT_TLS:-false}
+      SMTP_TIMEOUT: ${SMTP_TIMEOUT:-10s}
   notification-service:
     <<: *go-hardening
     restart: "on-failure:5"
+    logging: *production-logging
+    networks: !override [private, egress]
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql://notification_db_app:${NOTIFICATION_DB_APP_PASSWORD:?NOTIFICATION_DB_APP_PASSWORD is required}@postgres:5432/notification_db?sslmode=disable
@@ -191,6 +242,8 @@ services:
       SMTP_ADDRESS: ${SMTP_ADDRESS:?SMTP_ADDRESS is required}
       SMTP_USERNAME: ${SMTP_USERNAME:?SMTP_USERNAME is required}
       SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD is required}
+      SMTP_IMPLICIT_TLS: ${SMTP_IMPLICIT_TLS:-false}
+      SMTP_TIMEOUT: ${SMTP_TIMEOUT:-10s}
 
   caddy:
     image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
@@ -198,16 +251,20 @@ services:
     cap_drop: ["ALL"]
     cap_add: ["NET_BIND_SERVICE"]
     restart: unless-stopped
+    logging: *production-logging
     environment:
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:?INTERNAL_AUTH_TOKEN is required}
       # Production must override this with a monitored operator address. The
       # fallback only keeps configuration validation usable in local CI.
       CADDY_ACME_EMAIL: ${CADDY_ACME_EMAIL:?CADDY_ACME_EMAIL is required}
+      SAAS_DOMAIN: ${SAAS_DOMAIN:?SAAS_DOMAIN is required}
+      PLATFORM_ADMIN_HOST: ${PLATFORM_ADMIN_HOST:?PLATFORM_ADMIN_HOST is required}
     depends_on:
       gateway-service: {condition: service_healthy}
       tenant-service: {condition: service_healthy}
       admin-web: {condition: service_healthy}
       booking-web: {condition: service_healthy}
+      platform-admin-web: {condition: service_healthy}
     ports:
       - "80:80"
       - "443:443"
@@ -218,6 +275,7 @@ services:
       timeout: 3s
       retries: 6
     volumes:
+      !override
       - ./infrastructure/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
@@ -226,3 +284,8 @@ services:
 volumes:
   caddy_data: {}
   caddy_config: {}
+
+networks:
+  # Outbound-only path for SMTP clients. No service publishes ports on this
+  # bridge; all backend/datastore communication remains on `private`.
+  egress: {}

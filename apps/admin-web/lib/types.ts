@@ -118,6 +118,21 @@ export interface Appointment {
 
 export const staffRoles: Role[] = ["MANAGER", "BARBER", "RECEPTIONIST"];
 
+export const roleLabels: Record<Role, string> = {
+  OWNER: "İşletme sahibi",
+  MANAGER: "Yönetici",
+  BARBER: "Berber",
+  RECEPTIONIST: "Resepsiyonist",
+};
+
+export const appointmentStatusLabels: Record<Appointment["status"], string> = {
+  pending: "Bekliyor",
+  confirmed: "Onaylandı",
+  cancelled: "İptal edildi",
+  completed: "Tamamlandı",
+  no_show: "Gelmedi",
+};
+
 export function canWrite(role: Role): boolean {
   return role === "OWNER" || role === "MANAGER";
 }

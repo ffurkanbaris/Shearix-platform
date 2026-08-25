@@ -44,18 +44,23 @@ func TestTenantRedisCacheAndRecoveryIntegration(t *testing.T) {
 	if err = cache.FlushDB(ctx).Err(); err != nil {
 		t.Fatal(err)
 	}
-	tenant, domainID := uuid.New(), uuid.New()
+	tenant, domainID, adminDomainID := uuid.New(), uuid.New(), uuid.New()
 	hostname := "cache-" + uuid.NewString() + ".example.test"
+	adminHostname := "admin-cache-" + uuid.NewString() + ".example.test"
 	defer func() {
+		_, _ = owner.Exec(ctx, `DELETE FROM public.platform_audit_log WHERE tenant_id=$1`, tenant)
 		_, _ = owner.Exec(ctx, `DELETE FROM public.tenant_domains WHERE tenant_id=$1`, tenant)
 		_, _ = owner.Exec(ctx, `DELETE FROM public.tenant_settings WHERE tenant_id=$1`, tenant)
 		_, _ = owner.Exec(ctx, `DELETE FROM public.tenants WHERE id=$1`, tenant)
-		_ = cache.Del(context.Background(), "tenant-domain:"+hostname).Err()
+		_ = cache.Del(context.Background(), "tenant-domain:"+hostname, "tenant-domain:"+adminHostname).Err()
 	}()
 	if _, err = owner.Exec(ctx, `INSERT INTO public.tenants(id,name,status) VALUES($1,'Redis Test','active')`, tenant); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = owner.Exec(ctx, `INSERT INTO public.tenant_domains(id,tenant_id,hostname,domain_type,verified,active,verification_state) VALUES($1,$2,$3,'booking',true,true,'verified')`, domainID, tenant, hostname); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = owner.Exec(ctx, `INSERT INTO public.tenant_domains(id,tenant_id,hostname,domain_type,verified,active,verification_state) VALUES($1,$2,$3,'admin',true,true,'verified')`, adminDomainID, tenant, adminHostname); err != nil {
 		t.Fatal(err)
 	}
 	repo := repository.New(pool, cache)
@@ -66,6 +71,27 @@ func TestTenantRedisCacheAndRecoveryIntegration(t *testing.T) {
 	}
 	if exists, err := cache.Exists(ctx, "tenant-domain:"+hostname).Result(); err != nil || exists != 1 {
 		t.Fatalf("cache was not populated exists=%d err=%v", exists, err)
+	}
+	if _, err = repo.ResolveDomain(ctx, adminHostname); err != nil {
+		t.Fatalf("admin cache warm-up: %v", err)
+	}
+	if _, err = repo.SetTenantStatus(ctx, tenant, "suspended", "integration@example.com", uuid.NewString()); err != nil {
+		t.Fatalf("suspend tenant: %v", err)
+	}
+	if exists, err := cache.Exists(ctx, "tenant-domain:"+hostname, "tenant-domain:"+adminHostname).Result(); err != nil || exists != 0 {
+		t.Fatalf("tenant suspension left domain cache entries exists=%d err=%v", exists, err)
+	}
+	if _, err = repo.ResolveDomain(ctx, hostname); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("booking domain resolved after suspension: %v", err)
+	}
+	if _, err = repo.ResolveDomain(ctx, adminHostname); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("admin domain resolved after suspension: %v", err)
+	}
+	if _, err = repo.SetTenantStatus(ctx, tenant, "active", "integration@example.com", uuid.NewString()); err != nil {
+		t.Fatalf("reactivate tenant: %v", err)
+	}
+	if _, err = repo.ResolveDomain(ctx, hostname); err != nil {
+		t.Fatalf("booking cache warm-up after reactivation: %v", err)
 	}
 	if _, err = owner.Exec(ctx, `UPDATE public.tenant_domains SET domain_type='admin' WHERE id=$1`, domainID); err != nil {
 		t.Fatal(err)

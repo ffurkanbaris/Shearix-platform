@@ -1,0 +1,140 @@
+# Production-only operations overlay. Apply after the base and production
+# edge overlays. No telemetry backend is exposed to the public network;
+# Grafana is loopback-only and should be reached through an SSH tunnel.
+x-ops-hardening: &ops-hardening
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "5"}
+
+services:
+  observability-volume-init:
+    image: alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
+    user: "0:0"
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        chown -R 65534:65534 /prometheus /alertmanager
+        chown -R 10001:10001 /tempo /loki
+        chown -R 472:472 /grafana
+        chown -R 473:473 /alloy
+    volumes:
+      - prometheus_data:/prometheus
+      - alertmanager_data:/alertmanager
+      - tempo_data:/tempo
+      - loki_data:/loki
+      - grafana_data:/grafana
+      - alloy_data:/alloy
+    networks: [private]
+
+  prometheus:
+    <<: *ops-hardening
+    image: prom/prometheus:v2.54.1@sha256:f6639335d34a77d9d9db382b92eeb7fc00934be8eae81dbc03b31cfe90411a94
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
+      - --web.enable-lifecycle
+    volumes:
+      - ./infrastructure/observability/production/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infrastructure/observability/production/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    depends_on: {observability-volume-init: {condition: service_completed_successfully}}
+    networks: [private]
+
+  alertmanager:
+    <<: *ops-hardening
+    image: prom/alertmanager:v0.28.1@sha256:27c475db5fb156cab31d5c18a4251ac7ed567746a2483ff264516437a39b15ba
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager"]
+    volumes:
+      - ${ALERTMANAGER_CONFIG_FILE:?ALERTMANAGER_CONFIG_FILE is required}:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    depends_on: {observability-volume-init: {condition: service_completed_successfully}}
+    networks: [private, egress]
+
+  tempo:
+    <<: *ops-hardening
+    image: grafana/tempo:2.6.1@sha256:ef4384fce6e8ad22b95b243d8fc165628cda655376fd50e7850536ad89d71d50
+    command: ["-config.file=/etc/tempo.yml"]
+    volumes:
+      - ./infrastructure/observability/production/tempo.yml:/etc/tempo.yml:ro
+      - tempo_data:/var/tempo
+    depends_on: {observability-volume-init: {condition: service_completed_successfully}}
+    networks: [private]
+
+  otel-collector:
+    <<: *ops-hardening
+    image: otel/opentelemetry-collector-contrib:0.108.0@sha256:923eb1cfae32fe09676cfd74762b2b237349f2273888529594f6c6ffe1fb3d7e
+    command: ["--config=/etc/otel-collector.yml"]
+    volumes:
+      - ./infrastructure/observability/production/otel-collector.yml:/etc/otel-collector.yml:ro
+    depends_on: {tempo: {condition: service_started}}
+    networks: [private]
+
+  loki:
+    <<: *ops-hardening
+    image: grafana/loki:3.2.1@sha256:09a53b4a4ff81ffcd8f13886df19d33fac7a8d3aaf952e3c7e66cbade5b2fc31
+    command: ["-config.file=/etc/loki.yml"]
+    volumes:
+      - ./infrastructure/observability/production/loki.yml:/etc/loki.yml:ro
+      - loki_data:/loki
+    depends_on: {observability-volume-init: {condition: service_completed_successfully}}
+    networks: [private]
+
+  alloy:
+    <<: *ops-hardening
+    image: grafana/alloy:v1.4.2@sha256:625174f60ee3287a4ec9de7e818805f117376f1375169bc73482b41540697376
+    command: ["run", "/etc/alloy/config.alloy", "--storage.path=/var/lib/alloy/data"]
+    # Alloy owns only its bookmark state. DAC_READ_SEARCH is required to read
+    # root-owned Docker JSON logs without mounting the privileged Docker socket.
+    user: "473:473"
+    cap_add: ["DAC_READ_SEARCH"]
+    volumes:
+      - ./infrastructure/observability/production/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - alloy_data:/var/lib/alloy/data
+    depends_on: {loki: {condition: service_started}}
+    networks: [private]
+
+  grafana:
+    <<: *ops-hardening
+    image: grafana/grafana:11.2.0@sha256:408afb9726de5122b00a2576763a8a57a3c86d5b0eff5305bc994ceb3eb96c3f
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:?GRAFANA_ADMIN_USER is required}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./infrastructure/observability/production/grafana:/etc/grafana/provisioning:ro
+      - ./infrastructure/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      observability-volume-init: {condition: service_completed_successfully}
+      prometheus: {condition: service_started}
+      tempo: {condition: service_started}
+      loki: {condition: service_started}
+    ports: ["127.0.0.1:${GRAFANA_HOST_PORT:-3002}:3000"]
+    networks: [private]
+
+  gateway-service: &otel-client
+    environment: {OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317}
+    depends_on: {otel-collector: {condition: service_started}}
+  tenant-service: *otel-client
+  auth-service: *otel-client
+  barber-service: *otel-client
+  catalog-service: *otel-client
+  scheduling-service: *otel-client
+  appointment-service: *otel-client
+  customer-service: *otel-client
+  notification-service: *otel-client
+
+volumes:
+  prometheus_data: {}
+  alertmanager_data: {}
+  tempo_data: {}
+  loki_data: {}
+  alloy_data: {}
+  grafana_data: {}

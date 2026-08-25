@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { type RefObject, useEffect, useRef, useState } from "react";
 import { ApiError, apiClient } from "@/lib/api";
 import type { TenantConfig } from "@/lib/types";
-import { canManageMembers, canWrite } from "@/lib/types";
+import { canManageMembers, canWrite, roleLabels } from "@/lib/types";
 import { useSession } from "./auth-gate";
 
 /* ─── Icons ─────────────────────────────────────────────────────────────── */
@@ -107,7 +107,7 @@ const navIcons: Record<string, React.ReactNode> = {
 type NavigationItem = { href: string; label: string; visible: boolean };
 
 export function AppRail({ children, open, railRef }: Readonly<{ children: React.ReactNode; open: boolean; railRef: RefObject<HTMLElement | null> }>) {
-  return <aside ref={railRef} className={`sidebar${open ? " open" : ""}`} aria-label="Main navigation">{children}</aside>;
+  return <aside ref={railRef} className={`sidebar${open ? " open" : ""}`} aria-label="Ana gezinme">{children}</aside>;
 }
 
 export function AdminShell({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -115,13 +115,22 @@ export function AdminShell({ children }: Readonly<{ children: React.ReactNode }>
   const pathname = usePathname();
   const router = useRouter();
   const [config, setConfig] = useState<TenantConfig>();
+  const [configError, setConfigError] = useState("");
   const [open, setOpen] = useState(false);
   const [logoutError, setLogoutError] = useState("");
   const sidebarRef = useRef<HTMLElement>(null);
 
-  useEffect(() => {
+  function loadConfig() {
     const controller = new AbortController();
-    void apiClient.get<TenantConfig>("/v1/public/config", controller.signal).then(setConfig).catch(() => undefined);
+    setConfigError("");
+    void apiClient.get<TenantConfig>("/v1/public/config", controller.signal)
+      .then(setConfig)
+      .catch((cause) => setConfigError(cause instanceof ApiError ? cause.message : "İşletme bilgileri yüklenemedi."));
+    return controller;
+  }
+
+  useEffect(() => {
+    const controller = loadConfig();
     return () => controller.abort();
   }, []);
 
@@ -135,18 +144,21 @@ export function AdminShell({ children }: Readonly<{ children: React.ReactNode }>
     return () => document.removeEventListener("mousedown", handle);
   }, [open]);
 
-  const businessName = config?.business_name ?? "Your business";
+  if (configError) return <main className="centered-state"><h1>İşletme bilgileri yüklenemedi</h1><p>{configError}</p><button className="button primary" onClick={() => loadConfig()}>Tekrar dene</button></main>;
+  if (!config) return <main className="centered-state" aria-live="polite">İşletme bilgileri yükleniyor…</main>;
+
+  const businessName = config.business_name ?? "İşletmeniz";
   const initials = businessName.slice(0, 2).toUpperCase();
 
   const items: NavigationItem[] = [
-    { href: "/dashboard",    label: "Dashboard",     visible: true },
-    { href: "/appointments", label: "Appointments",  visible: true },
-    { href: "/staff",        label: "Staff",         visible: canManageMembers(principal.role) },
-    { href: "/branches",     label: "Branches",      visible: canWrite(principal.role) },
-    { href: "/barbers",      label: "Barbers",       visible: canWrite(principal.role) },
-    { href: "/services",     label: "Services",      visible: canWrite(principal.role) },
-    { href: "/schedules",    label: "Schedules",     visible: true },
-    { href: "/settings",     label: "Settings",      visible: true },
+    { href: "/dashboard",    label: "Genel Bakış", visible: true },
+    { href: "/appointments", label: "Randevular", visible: true },
+    { href: "/staff",        label: "Personel", visible: canManageMembers(principal.role) },
+    { href: "/branches",     label: "Şubeler", visible: canWrite(principal.role) },
+    { href: "/barbers",      label: "Berberler", visible: canWrite(principal.role) },
+    { href: "/services",     label: "Hizmetler", visible: canWrite(principal.role) },
+    { href: "/schedules",    label: "Çalışma Saatleri", visible: true },
+    { href: "/settings",     label: "Ayarlar", visible: true },
   ];
   const visibleItems = items.filter((item) => item.visible);
   const activeItem   = visibleItems.find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`));
@@ -154,16 +166,16 @@ export function AdminShell({ children }: Readonly<{ children: React.ReactNode }>
   async function logout() {
     setLogoutError("");
     try { await apiClient.post<void>("/v1/admin/auth/logout"); router.replace("/login"); router.refresh(); }
-    catch (cause) { setLogoutError(cause instanceof ApiError ? cause.message : "Unable to sign out. Please try again."); }
+    catch (cause) { setLogoutError(cause instanceof ApiError ? cause.message : "Çıkış yapılamadı. Lütfen tekrar deneyin."); }
   }
 
-  const roleLabel = principal.role.charAt(0) + principal.role.slice(1).toLowerCase();
+  const roleLabel = roleLabels[principal.role];
 
   return (
     <div className="app-shell">
       {/* Mobile top bar */}
       <header className="mobile-header">
-        <button className="icon-button" aria-label="Toggle navigation" onClick={() => setOpen((v) => !v)}>
+        <button className="icon-button" aria-label="Gezinmeyi aç veya kapat" aria-expanded={open} aria-controls="admin-navigation" onClick={() => setOpen((v) => !v)}>
           <IconMenu />
         </button>
         <span>{activeItem?.label ?? businessName}</span>
@@ -176,12 +188,12 @@ export function AdminShell({ children }: Readonly<{ children: React.ReactNode }>
           <span className="sidebar-brand-mark" aria-hidden="true">{initials}</span>
           <div>
             <div className="sidebar-brand-name">{businessName}</div>
-            <div className="sidebar-brand-sub">Admin panel</div>
+            <div className="sidebar-brand-sub">Yönetim paneli</div>
           </div>
         </div>
 
         {/* Nav */}
-        <nav className="sidebar-nav">
+        <nav className="sidebar-nav" id="admin-navigation">
           {visibleItems.map((item) => {
             const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
             return (
@@ -207,7 +219,7 @@ export function AdminShell({ children }: Readonly<{ children: React.ReactNode }>
             <div className="sidebar-account-role">{roleLabel}</div>
             {logoutError && <p className="error" role="alert" style={{ gridColumn: "1 / -1" }}>{logoutError}</p>}
             <button className="sidebar-signout" onClick={() => void logout()} style={{ gridColumn: "2" }}>
-              Sign out
+              Çıkış yap
             </button>
           </div>
         </div>

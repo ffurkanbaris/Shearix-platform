@@ -1,0 +1,15 @@
+# CI/local verification overlay for the production graph. It keeps Caddy off
+# privileged host ports and provides a private, non-published SMTP TCP sink.
+services:
+  caddy:
+    ports: !override ["18081:80"]
+
+  smtp-sink:
+    image: alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
+    command: ["sh", "-c", "while true; do printf '220 smtp-smoke ESMTP\\r\\n221 bye\\r\\n' | nc -l -p 2525; done"]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z -w 2 127.0.0.1 2525"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+    networks: [egress]

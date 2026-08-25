@@ -1,0 +1,20 @@
+# Trusted Cloud Build source context. Keep VCS history, local credentials, and
+# generated outputs out of uploaded build archives.
+.git
+.git/**
+**/.env
+**/.env.*
+!**/.env.example
+**/node_modules
+**/node_modules/**
+**/.next
+**/.next/**
+coverage
+coverage/**
+test-results
+test-results/**
+playwright-report
+playwright-report/**
+services/*/api
+*.tar.gz
+*:Zone.Identifier

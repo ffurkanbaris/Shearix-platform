@@ -51,6 +51,16 @@ type Tenant struct {
 	Settings  Settings  `json:"settings"`
 }
 
+type PlatformAudit struct {
+	ID        uuid.UUID      `json:"id"`
+	Actor     string         `json:"actor"`
+	Action    string         `json:"action"`
+	TenantID  *uuid.UUID     `json:"tenant_id,omitempty"`
+	RequestID string         `json:"request_id"`
+	Metadata  map[string]any `json:"metadata"`
+	CreatedAt time.Time      `json:"created_at"`
+}
+
 type CreateTenantInput struct {
 	Name     string   `json:"name"`
 	Settings Settings `json:"settings"`

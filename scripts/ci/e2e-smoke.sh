@@ -12,17 +12,32 @@ trap cleanup EXIT INT TERM
 cleanup
 
 $compose up -d --build --wait
-gateway=http://127.0.0.1:18080
+e2e_host=${E2E_HOST:-127.0.0.1}
+gateway=http://$e2e_host:18080
+booking_frontend=http://$e2e_host:13001
+admin_frontend=http://$e2e_host:13000
 json_id() { python3 -c 'import json,sys; value=json.load(sys.stdin)["id"]; assert value; print(value)' ; }
 first_slot() { python3 -c 'import json,sys; value=json.load(sys.stdin); assert value; print(value[0]["start_at"])' ; }
 curl --fail --silent --show-error -H 'Host: booking.localhost' "$gateway/api/v1/public/config" >/dev/null
 
+# Exercise the real browser-facing Next proxy, not only the gateway. The TCP
+# destination is the frontend container while Host remains tenant routing data.
+curl --fail --silent --show-error -H 'Host: booking.localhost' "$booking_frontend/api/v1/public/config" | grep -q '"app_type":"booking"' || {
+  echo "booking frontend proxy lost tenant Host routing" >&2; exit 1;
+}
+curl --fail --silent --show-error -H 'Host: admin.localhost' "$admin_frontend/api/v1/public/config" | grep -q '"app_type":"admin"' || {
+  echo "admin frontend proxy lost tenant Host routing" >&2; exit 1;
+}
+[ "$(curl --fail --silent --show-error -H 'Host: booking.localhost' "$booking_frontend/api/v1/public/services")" = '[]' ] || {
+  echo "empty public service collection must serialize as [] through the frontend proxy" >&2; exit 1;
+}
+
 # The deployed frontend routes must expose the email-only authentication
 # contract. Keep this check scoped to auth pages so legitimate business contact
 # phone fields elsewhere remain allowed.
-booking_register=$(curl --fail --silent --show-error -H 'Host: booking.localhost' 'http://127.0.0.1:13001/register')
-curl --fail --silent --show-error -H 'Host: admin.localhost' 'http://127.0.0.1:13000/login' >/dev/null
-printf '%s' "$booking_register" | grep -q 'you@example.com' || { echo "booking registration is missing its email identity field" >&2; exit 1; }
+booking_register=$(curl --fail --silent --show-error -H 'Host: booking.localhost' "$booking_frontend/register")
+curl --fail --silent --show-error -H 'Host: admin.localhost' "$admin_frontend/login" >/dev/null
+printf '%s' "$booking_register" | grep -q 'type="email"' || { echo "booking registration is missing its email identity field" >&2; exit 1; }
 printf '%s' "$booking_register" | grep -Eiq 'whatsapp|type="tel"|name="phone"' && { echo "authentication frontend contains a phone/WhatsApp identity control" >&2; exit 1; }
 
 curl --fail --silent --show-error -c "$cookie" -X POST -H 'Host: admin.localhost' -H 'Content-Type: application/json' \

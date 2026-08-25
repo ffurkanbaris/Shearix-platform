@@ -4,6 +4,52 @@ Scope: the shared `postgres` instance (8 per-service logical databases) and
 the `nats` JetStream store. Scripts live in `scripts/backup/`. Redis is
 intentionally out of scope -- see "Redis" below.
 
+Production automation wraps these logical backups with
+`backup-production.sh`: plaintext is staged in a mode-0700 directory, restic
+encrypts both content and metadata and uploads it to the configured off-host
+repository, then the staging directory is removed. The systemd timer in
+`infrastructure/production/systemd/` runs hourly with persistent catch-up after
+a reboot. Default retention is 24 hourly, 14 daily, 8 weekly, and 12 monthly
+snapshots. A success/failure heartbeat is mandatory so a silent timer or upload
+failure alerts outside this VM.
+
+`verify-production-backup.sh` runs weekly. It restores the newest encrypted
+snapshot to disposable storage and asks the matching `pg_restore` version to
+parse every database dump. This detects lost encryption keys, inaccessible
+storage, truncation, and invalid dump formats. It does not replace a quarterly
+full isolated restore drill: restore PostgreSQL and JetStream into a disposable
+Compose project, run migration/integration checks, record RPO/RTO and row/stream
+counts, then destroy only that disposable project.
+
+Install the schedules on the production VM after the root-owned environment
+file and staging directories exist:
+
+```sh
+sudo install -m 0644 infrastructure/production/systemd/barber-production-backup.service /etc/systemd/system/
+sudo install -m 0644 infrastructure/production/systemd/barber-production-backup.timer /etc/systemd/system/
+sudo install -m 0644 infrastructure/production/systemd/barber-production-backup-verify.service /etc/systemd/system/
+sudo install -m 0644 infrastructure/production/systemd/barber-production-backup-verify.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now barber-production-backup.timer barber-production-backup-verify.timer
+sudo systemctl list-timers 'barber-production-backup*'
+```
+
+Before enabling the timers, initialize the restic repository once using the
+same `RESTIC_REPOSITORY`, `RESTIC_PASSWORD`, and restricted object-store
+credentials from `/etc/barber-appointment/production.env`. Then run each
+service manually and verify that its external heartbeat monitor records the
+success:
+
+```sh
+sudo systemctl start barber-production-backup.service
+sudo systemctl start barber-production-backup-verify.service
+sudo journalctl -u barber-production-backup.service -u barber-production-backup-verify.service
+```
+
+Alert if either heartbeat misses two expected intervals. Also alert on the
+persistent disk's free space; local staging and Docker volumes share the host's
+storage performance even though the encrypted repository is off-host.
+
 All scripts are POSIX `sh`, follow the `scripts/ci/*.sh` conventions of this
 repo (`set -eu`, a `repo=$(...)` header, parameterized Compose project/files,
 no hardcoded secrets), and read credentials only from the same environment
@@ -171,7 +217,8 @@ freshly emptied `nats`), remove or purge the existing stream first:
 
 ```sh
 docker run --rm --network <project>_private -e NATS_USER -e NATS_PASSWORD \
-  natsio/nats-box:latest nats -s nats://nats:4222 stream rm <STREAM> -f
+  natsio/nats-box:0.19.2@sha256:8031d190c7ee24081f3f27cc939fb647a1eeb29ebb5c60fef9b5b6c7a846d6a2 \
+  nats -s nats://nats:4222 stream rm <STREAM> -f
 ```
 
 ## NATS JetStream: verifying a restore
@@ -180,11 +227,13 @@ Check stream state and actually consume:
 
 ```sh
 docker run --rm --network <project>_private -e NATS_USER -e NATS_PASSWORD \
-  natsio/nats-box:latest nats -s nats://nats:4222 stream info <STREAM>
+  natsio/nats-box:0.19.2@sha256:8031d190c7ee24081f3f27cc939fb647a1eeb29ebb5c60fef9b5b6c7a846d6a2 \
+  nats -s nats://nats:4222 stream info <STREAM>
 # messages/first_seq/last_seq should match the backup's stream info
 
 docker run --rm --network <project>_private -e NATS_USER -e NATS_PASSWORD \
-  natsio/nats-box:latest nats -s nats://nats:4222 consumer next <STREAM> <CONSUMER> --count N
+  natsio/nats-box:0.19.2@sha256:8031d190c7ee24081f3f27cc939fb647a1eeb29ebb5c60fef9b5b6c7a846d6a2 \
+  nats -s nats://nats:4222 consumer next <STREAM> <CONSUMER> --count N
 # confirms messages are not just present but consumable via the restored consumer
 ```
 

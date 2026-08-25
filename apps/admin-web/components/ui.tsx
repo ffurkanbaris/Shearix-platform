@@ -2,6 +2,7 @@
 
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
+import { appointmentStatusLabels, roleLabels, type Appointment, type Role } from "@/lib/types";
 
 /* ─── Page heading ───────────────────────────────────────────────────────── */
 export function PageHeading({ eyebrow, title, description, action }: { eyebrow?: string; title: string; description?: string; action?: ReactNode }) {
@@ -73,12 +74,12 @@ export function EmptyState({ title, body, action }: { title: string; body: strin
 
 /* ─── Error state ────────────────────────────────────────────────────────── */
 export function ErrorNotice({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
-  const message = error instanceof ApiError ? error.message : "Unable to load this data.";
+  const message = error instanceof ApiError ? error.message : "Bu veriler yüklenemedi.";
   return (
     <div className="notice error" role="alert" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
       <span>{message}</span>
       {onRetry && (
-        <button className="button danger sm" onClick={onRetry} type="button">Retry</button>
+        <button className="button danger sm" onClick={onRetry} type="button">Tekrar dene</button>
       )}
     </div>
   );
@@ -105,20 +106,24 @@ const ROLE_CLASS: Record<string, string> = {
 export function StatusBadge({ active, label }: { active?: boolean; label?: string }) {
   const statusKey = label ? label.replace(/ /g, "_").toLowerCase() : (active ? "active" : "inactive");
   const cls = STATUS_CLASS[statusKey] ?? (active ? "active" : "inactive");
-  const text = label ?? (active ? "Active" : "Inactive");
+  const text = statusKey in appointmentStatusLabels
+    ? appointmentStatusLabels[statusKey as Appointment["status"]]
+    : (label ?? (active ? "Aktif" : "Pasif"));
   return <span className={`badge ${cls}`}>{text.replace(/_/g, " ")}</span>;
 }
 
 export function StatusIndicator({ active, label }: { active?: boolean; label?: string }) {
   const statusKey = label ? label.replace(/ /g, "_").toLowerCase() : (active ? "active" : "inactive");
   const cls = STATUS_CLASS[statusKey] ?? (active ? "active" : "inactive");
-  const text = label ?? (active ? "Active" : "Inactive");
+  const text = statusKey in appointmentStatusLabels
+    ? appointmentStatusLabels[statusKey as Appointment["status"]]
+    : (label ?? (active ? "Aktif" : "Pasif"));
   return <span className={`status-indicator ${cls}`}><i aria-hidden="true" />{text.replace(/_/g, " ")}</span>;
 }
 
 export function RoleBadge({ role }: { role: string }) {
   const cls = ROLE_CLASS[role] ?? "role-owner";
-  return <span className={`badge ${cls}`}>{role.charAt(0) + role.slice(1).toLowerCase()}</span>;
+  return <span className={`badge ${cls}`}>{roleLabels[role as Role] ?? role}</span>;
 }
 
 /* ─── Form field ─────────────────────────────────────────────────────────── */
@@ -157,15 +162,15 @@ export function ConfirmDialog({
 }) {
   return (
     <div className="confirm-layer" role="presentation">
-      <button aria-label="Close confirmation" className="confirm-backdrop" onClick={onCancel} type="button" />
+      <button aria-label="Onay penceresini kapat" className="confirm-backdrop" onClick={onCancel} type="button" />
       <section aria-modal="true" aria-labelledby="confirm-title" className="confirm-dialog" role="dialog">
-        <span className="eyebrow">Confirm action</span>
+        <span className="eyebrow">İşlemi onaylayın</span>
         <h2 id="confirm-title">{title}</h2>
         <p className="muted">{description}</p>
         <div className="dialog-actions">
-          <button className="button secondary" disabled={busy} onClick={onCancel} type="button">Cancel</button>
+          <button className="button secondary" disabled={busy} onClick={onCancel} type="button">Vazgeç</button>
           <button className={`button ${variant}`} disabled={busy} onClick={onConfirm} type="button">
-            {busy ? "Working…" : confirmLabel}
+            {busy ? "İşleniyor…" : confirmLabel}
           </button>
         </div>
       </section>
@@ -195,11 +200,11 @@ export function Drawer({
 
   return (
     <div className="drawer-layer" role="presentation">
-      <button aria-label="Close panel" className="drawer-backdrop" onClick={onClose} type="button" />
+      <button aria-label="Paneli kapat" className="drawer-backdrop" onClick={onClose} type="button" />
       <section aria-modal="true" aria-labelledby="drawer-title" className={`drawer${wide ? " wide" : ""}`} role="dialog">
         <header className="drawer-header">
           <h2 id="drawer-title">{title}</h2>
-          <button ref={closeRef} aria-label="Close panel" className="dialog-close" onClick={onClose} type="button">×</button>
+          <button ref={closeRef} aria-label="Paneli kapat" className="dialog-close" onClick={onClose} type="button">×</button>
         </header>
         <div className="drawer-body">{children}</div>
         {footer && <div className="drawer-footer">{footer}</div>}
@@ -241,11 +246,11 @@ export type ScheduleGridDay = { label: string; intervals: { start: string; end: 
 
 export function ScheduleGrid({ days }: { days: ScheduleGridDay[] }) {
   return (
-    <div className="schedule-grid" aria-label="Weekly working hours">
+    <div className="schedule-grid" aria-label="Haftalık çalışma saatleri">
       {days.map((day) => (
         <section className="schedule-grid-day" key={day.label}>
           <h3>{day.label}</h3>
-          {day.intervals.length === 0 ? <p>Closed</p> : (
+          {day.intervals.length === 0 ? <p>Kapalı</p> : (
             <div className="schedule-blocks">
               {day.intervals.map((interval) => <span key={`${interval.start}-${interval.end}`}>{interval.start}<i />{interval.end}</span>)}
             </div>
@@ -279,7 +284,7 @@ export function ActionMenu({ items }: { items: ActionMenuItem[] }) {
     <div className="action-menu-wrap" ref={wrapRef}>
       <button
         className="action-menu-trigger"
-        aria-label="Actions"
+        aria-label="İşlemler"
         aria-expanded={open}
         aria-haspopup="menu"
         onClick={() => setOpen((v) => !v)}

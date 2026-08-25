@@ -133,6 +133,29 @@ func (s TenantService) Tenant(ctx context.Context, tenantID string) (domain.Tena
 	return s.repository.Tenant(ctx, id)
 }
 
+func (s TenantService) Tenants(ctx context.Context) ([]domain.Tenant, error) {
+	return s.repository.Tenants(ctx)
+}
+
+func (s TenantService) SetTenantStatus(ctx context.Context, tenantID, status, actor, requestID string) (domain.Tenant, error) {
+	id, err := parseTenantID(tenantID)
+	if err != nil || (status != "active" && status != "suspended") || strings.TrimSpace(actor) == "" || strings.TrimSpace(requestID) == "" {
+		return domain.Tenant{}, ErrInvalidInput
+	}
+	return s.repository.SetTenantStatus(ctx, id, status, strings.TrimSpace(actor), strings.TrimSpace(requestID))
+}
+
+func (s TenantService) PlatformAudit(ctx context.Context, tenantID string) ([]domain.PlatformAudit, error) {
+	if tenantID == "" {
+		return s.repository.PlatformAudit(ctx, nil)
+	}
+	id, err := parseTenantID(tenantID)
+	if err != nil {
+		return nil, ErrInvalidInput
+	}
+	return s.repository.PlatformAudit(ctx, &id)
+}
+
 func (s TenantService) CreateDomain(ctx context.Context, tenantID string, input domain.CreateDomainInput) (domain.TenantDomain, error) {
 	id, err := parseTenantID(tenantID)
 	if err != nil {

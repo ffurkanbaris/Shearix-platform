@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -100,7 +101,13 @@ func (h Handler) Register(app *fiber.App) {
 	// are protected by a distinct platform-admin credential and cannot be
 	// reached as tenant-admin APIs.
 	app.Post("/api/v1/platform/tenants", h.platformProxy("/internal/v1/platform/tenants"))
+	app.Get("/api/v1/platform/tenants", h.platformProxy("/internal/v1/platform/tenants"))
 	app.Get("/api/v1/platform/tenants/:id", h.platformProxy("/internal/v1/platform/tenants/:id"))
+	app.Post("/api/v1/platform/tenants/:id/activate", h.platformProxy("/internal/v1/platform/tenants/:id/activate"))
+	app.Post("/api/v1/platform/tenants/:id/suspend", h.platformProxy("/internal/v1/platform/tenants/:id/suspend"))
+	app.Get("/api/v1/platform/audit", h.platformProxy("/internal/v1/platform/audit"))
+	app.Get("/api/v1/platform/tenants/:id/owners", h.platformServiceProxy(h.authURL, "/internal/v1/platform/tenants/:id/owners"))
+	app.Get("/api/v1/platform/health", h.platformHealth)
 	app.Post("/api/v1/platform/tenants/:id/domains", h.platformProxy("/internal/v1/platform/tenants/:id/domains"))
 	app.Get("/api/v1/platform/tenants/:id/domains", h.platformProxy("/internal/v1/platform/tenants/:id/domains"))
 	app.Post("/api/v1/platform/tenants/:id/domains/:domain_id/verify", h.platformProxy("/internal/v1/platform/tenants/:id/domains/:domain_id/verify"))
@@ -136,6 +143,8 @@ func (h Handler) platformProxy(path string) fiber.Handler {
 		request.Header.Set(internalauth.HeaderName, h.token)
 		request.Header.Set(tenantctx.RequestIDHeader, requestID(c))
 		request.Header.Set("Content-Type", c.Get("Content-Type"))
+		request.Header.Set("X-Platform-Actor", c.Get("X-Platform-Actor"))
+		request.URL.RawQuery = string(c.Request().URI().QueryString())
 		response, err := h.client.Do(request)
 		if err != nil {
 			return upstreamError(c, err)
@@ -147,6 +156,74 @@ func (h Handler) platformProxy(path string) fiber.Handler {
 		}
 		return c.Status(response.StatusCode).Send(body)
 	}
+}
+
+func (h Handler) platformServiceProxy(base, path string) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		if h.platformAuth.Verify(c.Get(platformauth.HeaderName)) != nil {
+			return c.SendStatus(401)
+		}
+		target := strings.ReplaceAll(path, ":id", c.Params("id"))
+		req, _ := http.NewRequestWithContext(c.Context(), c.Method(), base+target, nil)
+		req.Header.Set(internalauth.HeaderName, h.token)
+		req.Header.Set(tenantctx.RequestIDHeader, requestID(c))
+		resp, err := h.client.Do(req)
+		if err != nil {
+			return upstreamError(c, err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return c.Status(resp.StatusCode).Send(body)
+	}
+}
+
+func (h Handler) platformHealth(c fiber.Ctx) error {
+	if h.platformAuth.Verify(c.Get(platformauth.HeaderName)) != nil {
+		return c.SendStatus(401)
+	}
+	services := map[string]string{"tenant": h.tenantURL, "auth": h.authURL, "barber": h.barberURL, "catalog": h.catalogURL, "scheduling": h.schedulingURL, "appointment": h.appointmentURL, "notification": h.notificationURL, "customer": h.customerURL}
+	result := fiber.Map{}
+	for name, base := range services {
+		req, _ := http.NewRequestWithContext(c.Context(), http.MethodGet, base+"/ready", nil)
+		resp, err := h.client.Do(req)
+		ready := err == nil && resp.StatusCode == 200
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		entry := fiber.Map{"ready": ready}
+		if name == "appointment" || name == "notification" {
+			metricsReq, _ := http.NewRequestWithContext(c.Context(), http.MethodGet, base+"/metrics", nil)
+			if metricsResp, metricsErr := h.client.Do(metricsReq); metricsErr == nil {
+				raw, _ := io.ReadAll(metricsResp.Body)
+				_ = metricsResp.Body.Close()
+				entry["failure_indicators"] = metricTotals(string(raw), []string{"outbox_backlog", "outbox_terminal_total", "outbox_publish_failures_total", "notification_failed_total"})
+			}
+		}
+		result[name] = entry
+	}
+	return c.JSON(result)
+}
+
+func metricTotals(raw string, names []string) map[string]float64 {
+	result := map[string]float64{}
+	for _, line := range strings.Split(raw, "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		metric := strings.SplitN(fields[0], "{", 2)[0]
+		for _, name := range names {
+			if metric == name {
+				if value, err := strconv.ParseFloat(fields[1], 64); err == nil {
+					result[name] += value
+				}
+			}
+		}
+	}
+	return result
 }
 
 func hostname(c fiber.Ctx) string {

@@ -49,21 +49,21 @@ describe("admin CRUD dialogs", () => {
     const user = userEvent.setup();
     render(<BranchesPage />);
     await screen.findByText("Original Branch");
-    await user.click(screen.getByRole("button", { name: /new branch/i }));
+    await user.click(screen.getByRole("button", { name: /yeni şube/i }));
     const createDialog = screen.getByRole("dialog");
-    const createName = within(createDialog).getByRole("textbox", { name: "Name" });
+    const createName = within(createDialog).getByRole("textbox", { name: "Ad" });
     expect((createName as HTMLInputElement).value).toBe("");
-    await user.click(within(createDialog).getByRole("button", { name: "Cancel" }));
+    await user.click(within(createDialog).getByRole("button", { name: "Vazgeç" }));
 
-    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Düzenle" }));
     const dialog = screen.getByRole("dialog");
-    expect((within(dialog).getByLabelText("Name") as HTMLInputElement).value).toBe("Original Branch");
-    await user.clear(within(dialog).getByLabelText("Name"));
-    await user.type(within(dialog).getByLabelText("Name"), "Changed only in dialog");
-    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect((within(dialog).getByLabelText("Ad") as HTMLInputElement).value).toBe("Original Branch");
+    await user.clear(within(dialog).getByLabelText("Ad"));
+    await user.type(within(dialog).getByLabelText("Ad"), "Changed only in dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Vazgeç" }));
 
-    await user.click(screen.getByRole("button", { name: /new branch/i }));
-    expect((within(screen.getByRole("dialog")).getByRole("textbox", { name: "Name" }) as HTMLInputElement).value).toBe("");
+    await user.click(screen.getByRole("button", { name: /yeni şube/i }));
+    expect((within(screen.getByRole("dialog")).getByRole("textbox", { name: "Ad" }) as HTMLInputElement).value).toBe("");
     expect(screen.getByText("Original Branch")).toBeTruthy();
     expect(mocks.patch).not.toHaveBeenCalled();
   });
@@ -78,17 +78,17 @@ describe("admin CRUD dialogs", () => {
     render(<BranchesPage />);
     await screen.findByText("Original Branch");
 
-    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Düzenle" }));
     const dialog = screen.getByRole("dialog");
-    const name = within(dialog).getByLabelText("Name");
+    const name = within(dialog).getByLabelText("Ad");
     await user.clear(name); await user.type(name, "Updated Branch");
-    await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+    await user.click(within(dialog).getByRole("button", { name: "Değişiklikleri kaydet" }));
     await screen.findByText("Updated Branch");
     expect(mocks.patch).toHaveBeenCalledWith("/v1/admin/branches/branch-1", expect.objectContaining({ name: "Updated Branch" }));
 
-    await user.click(screen.getByRole("button", { name: "Deactivate" }));
-    expect(screen.getByRole("dialog").textContent).toContain("Deactivate branch?");
-    await user.click(screen.getByRole("button", { name: "Deactivate branch" }));
+    await user.click(screen.getByRole("button", { name: "Pasife al" }));
+    expect(screen.getByRole("dialog").textContent).toContain("Şube pasife alınsın mı?");
+    await user.click(screen.getByRole("button", { name: "Şubeyi pasife al" }));
     await waitFor(() => expect(mocks.patch).toHaveBeenLastCalledWith("/v1/admin/branches/branch-1", expect.objectContaining({ active: false })));
   });
 
@@ -98,10 +98,10 @@ describe("admin CRUD dialogs", () => {
     const user = userEvent.setup();
     render(<ServicesPage />);
     await screen.findByText("Haircut");
-    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Düzenle" }));
     const dialog = screen.getByRole("dialog");
-    expect((within(dialog).getByLabelText("Price") as HTMLInputElement).value).toBe("250.00");
-    await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+    expect((within(dialog).getByLabelText("Fiyat") as HTMLInputElement).value).toBe("250.00");
+    await user.click(within(dialog).getByRole("button", { name: "Değişiklikleri kaydet" }));
     expect(await within(dialog).findByText("Price must be an exact decimal")).toBeTruthy();
   });
 
@@ -110,8 +110,8 @@ describe("admin CRUD dialogs", () => {
     mocks.get.mockResolvedValue([branch]);
     render(<BranchesPage />);
     await screen.findByText("Original Branch");
-    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /new branch/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Düzenle" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /yeni şube/i })).toBeNull();
   });
 
   it("reflects all backend branch-write role capabilities", async () => {
@@ -120,8 +120,8 @@ describe("admin CRUD dialogs", () => {
 	  mocks.get.mockResolvedValue([branch]);
 	  const view = render(<BranchesPage />);
 	  await screen.findByText("Original Branch");
-	  expect(Boolean(screen.queryByRole("button", { name: "Edit" }))).toBe(writable);
-	  expect(Boolean(screen.queryByRole("button", { name: /new branch/i }))).toBe(writable);
+	  expect(Boolean(screen.queryByRole("button", { name: "Düzenle" }))).toBe(writable);
+	  expect(Boolean(screen.queryByRole("button", { name: /yeni şube/i }))).toBe(writable);
 	  view.unmount();
 	}
   });
@@ -132,10 +132,10 @@ describe("admin CRUD dialogs", () => {
     const user = userEvent.setup();
     render(<StaffPage />);
     await screen.findByText("Staff Member");
-    await user.click(screen.getByRole("button", { name: "Edit role" }));
+    await user.click(screen.getByRole("button", { name: "Rolü düzenle" }));
     const dialog = screen.getByRole("dialog");
-    expect((within(dialog).getByLabelText("Role") as HTMLSelectElement).value).toBe("RECEPTIONIST");
-    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect((within(dialog).getByLabelText("Rol") as HTMLSelectElement).value).toBe("RECEPTIONIST");
+    await user.click(within(dialog).getByRole("button", { name: "Vazgeç" }));
     expect(mocks.patch).not.toHaveBeenCalled();
   });
 
@@ -152,15 +152,15 @@ describe("admin CRUD dialogs", () => {
     await screen.findByText("2030-01-08 · custom_hours");
     await user.selectOptions(screen.getByLabelText("Type"), "custom_hours");
     const createIntervals = screen.getByPlaceholderText("10:00-14:00, 15:00-18:00");
-    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Düzenle" }));
     const dialog = screen.getByRole("dialog");
     expect((within(dialog).getByLabelText("Intervals") as HTMLInputElement).value).toBe("10:00-14:00");
-    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await user.click(within(dialog).getByRole("button", { name: "Vazgeç" }));
     expect((createIntervals as HTMLInputElement).value).toBe("");
 
-    await user.click(screen.getAllByRole("button", { name: "Delete" })[0]);
-    expect(screen.getByRole("dialog").textContent).toContain("Delete schedule override?");
-    await user.click(screen.getByRole("button", { name: "Delete override" }));
+    await user.click(screen.getAllByRole("button", { name: "Sil" })[0]);
+    expect(screen.getByRole("dialog").textContent).toContain("Özel gün ayarı silinsin mi?");
+    await user.click(screen.getByRole("button", { name: "Özel gün ayarını sil" }));
     await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith("/v1/admin/barbers/barber-1/overrides/override-1"));
   });
 });

@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiClient } from "@/lib/api";
-import { displayDateTime } from "@/lib/format";
-import type { Appointment, Barber, CatalogService, TenantConfig } from "@/lib/types";
+import { dateKeyInTimezone, displayDateTime } from "@/lib/format";
+import { appointmentStatusLabels, type Appointment, type Barber, type CatalogService, type TenantConfig } from "@/lib/types";
 import { EmptyState, ErrorNotice, LoadingState, PageHeading, StatusIndicator, Timeline } from "@/components/ui";
 
 type DashboardData = { appointments: Appointment[]; barbers: Barber[]; services: CatalogService[]; config: TenantConfig };
@@ -34,7 +34,7 @@ export default function DashboardPage() {
   if (error) {
     return (
       <>
-        <PageHeading eyebrow="Operations" title="Dashboard" />
+        <PageHeading eyebrow="Operasyon" title="Genel Bakış" />
         <ErrorNotice error={error} onRetry={() => { setError(undefined); load(); }} />
       </>
     );
@@ -43,7 +43,7 @@ export default function DashboardPage() {
   if (!data) {
     return (
       <>
-        <PageHeading eyebrow="Operations" title="Dashboard" description="Your team's day at a glance." />
+        <PageHeading eyebrow="Operasyon" title="Genel Bakış" description="Ekibinizin gününü bir bakışta görün." />
         <LoadingState />
       </>
     );
@@ -52,8 +52,9 @@ export default function DashboardPage() {
   const now = new Date();
   const tz  = data.config.business_timezone;
 
+  const todayKey = dateKeyInTimezone(now, tz);
   const today = data.appointments
-    .filter((a) => new Date(a.start_at).toDateString() === now.toDateString() && a.status !== "cancelled")
+    .filter((a) => dateKeyInTimezone(a.start_at, tz) === todayKey && a.status !== "cancelled")
     .sort((a, b) => a.start_at.localeCompare(b.start_at));
 
   const upcoming = data.appointments
@@ -64,56 +65,56 @@ export default function DashboardPage() {
   const activeBarbers  = data.barbers.filter((b) => b.active).length;
   const activeServices = data.services.filter((s) => s.active).length;
 
-  const title = data.config.business_name ? `${data.config.business_name}` : "Dashboard";
-  const dateLabel = new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric", timeZone: tz }).format(now);
-  const time = (value: string) => new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz }).format(new Date(value));
+  const title = data.config.business_name ? `${data.config.business_name}` : "Genel Bakış";
+  const dateLabel = new Intl.DateTimeFormat("tr-TR", { weekday: "long", month: "long", day: "numeric", timeZone: tz }).format(now);
+  const time = (value: string) => new Intl.DateTimeFormat("tr-TR", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz }).format(new Date(value));
 
   return (
     <>
       <PageHeading
-        eyebrow="Today"
+        eyebrow="Bugün"
         title={title}
         description={dateLabel}
         action={
-          <Link href="/appointments" className="button secondary sm">View all appointments</Link>
+          <Link href="/appointments" className="button secondary sm">Tüm randevuları görüntüle</Link>
         }
       />
 
-      <section aria-label="Today at a glance">
+      <section aria-label="Bugünün özeti">
         <div className="today-lead">
-          <span className="eyebrow">Appointments scheduled</span>
+          <span className="eyebrow">Planlanan randevular</span>
           <strong className="today-number">{today.length}</strong>
-          <span className="muted">{today.length === 1 ? "booking" : "bookings"} on the diary today</span>
+          <span className="muted">bugünkü takvimde {today.length} randevu</span>
         </div>
       </section>
 
-      <div className="kpi-grid" aria-label="Key metrics">
+      <div className="kpi-grid" aria-label="Temel göstergeler">
         <div className="kpi">
-          <span className="kpi-label">Appointments</span>
+          <span className="kpi-label">Randevular</span>
           <span className="kpi-value">{today.length}</span>
         </div>
         <div className="kpi">
-          <span className="kpi-label">Barbers</span>
+          <span className="kpi-label">Berberler</span>
           <span className="kpi-value">{activeBarbers}</span>
-          <span className="kpi-sub">active roster</span>
+          <span className="kpi-sub">aktif ekip</span>
         </div>
         <div className="kpi">
-          <span className="kpi-label">Services</span>
+          <span className="kpi-label">Hizmetler</span>
           <span className="kpi-value">{activeServices}</span>
-          <span className="kpi-sub">bookable services</span>
+          <span className="kpi-sub">randevu alınabilen hizmetler</span>
         </div>
         <div className="kpi">
-          <span className="kpi-label">Remaining slots</span>
+          <span className="kpi-label">Kalan saatler</span>
           <span className="kpi-value">—</span>
-          <span className="kpi-sub">checked per booking</span>
+          <span className="kpi-sub">randevu sırasında kontrol edilir</span>
         </div>
       </div>
 
       <section className="panel dashboard-timeline-panel">
           <div className="panel-header">
             <div className="panel-header-text">
-              <span className="eyebrow">Schedule</span>
-              <h2>Today&apos;s timeline</h2>
+              <span className="eyebrow">Takvim</span>
+              <h2>Bugünün akışı</h2>
               <p className="muted">{dateLabel} · {tz}</p>
             </div>
           </div>
@@ -122,23 +123,23 @@ export default function DashboardPage() {
               id: appointment.id,
               time: time(appointment.start_at),
               title: appointment.customer_name,
-              detail: `Appointment · ${displayDateTime(appointment.start_at, tz)}`,
-              status: appointment.status.replace("_", " "),
+              detail: `Randevu · ${displayDateTime(appointment.start_at, tz)}`,
+              status: appointmentStatusLabels[appointment.status],
             }))}
-            empty={<EmptyState title="No appointments today" body="Your next booking will appear here." />}
+            empty={<EmptyState title="Bugün randevu yok" body="Bir sonraki randevunuz burada görünecek." />}
           />
       </section>
 
       <section className="panel">
           <div className="panel-header">
             <div className="panel-header-text">
-              <span className="eyebrow">Next up</span>
-              <h2>Upcoming</h2>
-              <p className="muted">The next appointments across the business.</p>
+              <span className="eyebrow">Sırada</span>
+              <h2>Yaklaşan randevular</h2>
+              <p className="muted">İşletmedeki sıradaki randevular.</p>
             </div>
           </div>
           {upcoming.length === 0 ? (
-            <EmptyState title="No upcoming appointments" body="New appointments will appear here as they are created." />
+            <EmptyState title="Yaklaşan randevu yok" body="Yeni randevular oluşturuldukça burada görünecek." />
           ) : (
             <div className="list">
               {upcoming.map((a) => (
@@ -147,7 +148,7 @@ export default function DashboardPage() {
                     <strong>{a.customer_name}</strong>
                     <span>{displayDateTime(a.start_at, tz)}</span>
                   </div>
-                  <StatusIndicator label={a.status.replace("_", " ")} active={a.status === "confirmed" || a.status === "pending"} />
+                  <StatusIndicator label={appointmentStatusLabels[a.status]} active={a.status === "confirmed" || a.status === "pending"} />
                 </div>
               ))}
             </div>

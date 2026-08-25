@@ -17,7 +17,7 @@
 # Env:
 #   BACKUP_COMPOSE_PROJECT  Compose project name (default: barber-appointment)
 #   BACKUP_NATS_IMAGE       NATS CLI client image
-#                           (default: natsio/nats-box:latest)
+#                           (default: pinned nats-box 0.19.2 image)
 #   NATS_USER, NATS_PASSWORD
 #                           Credentials for the `nats` service -- the same
 #                           variables the compose files already read.
@@ -28,7 +28,7 @@ backup_dir=${1:?usage: restore-nats.sh <backup_dir> [stream ...]}
 shift
 
 project=${BACKUP_COMPOSE_PROJECT:-barber-appointment}
-nats_image=${BACKUP_NATS_IMAGE:-natsio/nats-box:latest}
+nats_image=${BACKUP_NATS_IMAGE:-natsio/nats-box:0.19.2@sha256:8031d190c7ee24081f3f27cc939fb647a1eeb29ebb5c60fef9b5b6c7a846d6a2}
 : "${NATS_USER:?NATS_USER must be set (same value the nats service uses)}"
 : "${NATS_PASSWORD:?NATS_PASSWORD must be set (same value the nats service uses)}"
 

@@ -3,10 +3,10 @@ import "./globals.css";
 import { CustomerSessionProvider } from "@/components/session";
 
 export const metadata: Metadata = {
-  title: "Book an appointment",
-  description: "Book a barber appointment",
+  title: "Randevu Al",
+  description: "Berber randevusu alın",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body><CustomerSessionProvider>{children}</CustomerSessionProvider></body></html>;
+  return <html lang="tr"><body><CustomerSessionProvider>{children}</CustomerSessionProvider></body></html>;
 }

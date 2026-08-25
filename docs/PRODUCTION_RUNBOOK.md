@@ -1,7 +1,8 @@
 # Production Runbook
 
 Scope: operating the production Compose deployment described by
-`docker-compose.yml` + `infrastructure/caddy/docker-compose.production.yml`.
+`docker-compose.yml`, `infrastructure/caddy/docker-compose.production.yml`,
+and `docker-compose.production-observability.yml`.
 This file is the operator-facing entry point; it links out to
 `scripts/backup/RUNBOOK.md` for backup/restore detail rather than
 duplicating it.
@@ -92,10 +93,11 @@ secrets per destination - judged out of scope as a "major redesign" per the
 original request. Revisit if/when this matters more than the added secret-
 management complexity.
 
-## 4. Image pinning
+## 4. Image pinning and immutable releases
 
-Every image in both Compose files is pinned to an exact tag **and** digest
-(`image:tag@sha256:...`), not `latest`:
+Every third-party runtime image in Compose and every Dockerfile base image is
+pinned to an exact version and multi-platform digest
+(`image:tag@sha256:...`), never a floating tag:
 
 | Image | Pinned to |
 | --- | --- |
@@ -103,33 +105,114 @@ Every image in both Compose files is pinned to an exact tag **and** digest
 | `redis` | `7.4.11-alpine` |
 | `nats` | `2.10-alpine` |
 | `caddy` | `2.10.2-alpine` |
-| `prom/prometheus` (dev-only observability overlay) | `v2.54.1` |
-| `otel/opentelemetry-collector-contrib` (dev-only) | `0.108.0` |
-| `grafana/grafana` (dev-only) | `11.2.0` |
+| Go builder | `1.26.6-alpine` |
+| application runtime Alpine | `3.23` |
+| frontend Node | `22.22.0-alpine3.23` |
+| `prom/prometheus` | `v2.54.1` |
+| `prom/alertmanager` | `v0.28.1` |
+| `otel/opentelemetry-collector-contrib` | `0.108.0` |
+| `grafana/grafana` | `11.2.0` |
+| `grafana/tempo` | `2.6.1` |
+| `grafana/loki` | `3.2.1` |
+| `grafana/alloy` | `v1.4.2` |
 
 To bump a pin: resolve the new tag's digest (`docker buildx imagetools
 inspect <image>:<tag>` or the registry API), update both the tag and the
 `@sha256:...` together, then re-run `scripts/ci/compose.sh` and a full
 `docker compose build` before deploying.
 
-## 5. Startup
+Application release images use `${IMAGE_REGISTRY}/<component>:${RELEASE_TAG}`.
+For a release, set `RELEASE_TAG` to the full Git commit SHA, build once in CI,
+push that exact tag, and record the registry digest produced by the push. Do
+not rebuild the tag on the production host and never reuse a release tag.
+Generate and retain a digest-locked Compose override from the pushed images
+(`docker compose config --lock-image-digests`) and deploy with that override
+and `--no-build`. Rollback means selecting a previously recorded release
+manifest/digest set, not rebuilding old source.
+
+In the trusted release job, after every application image has been pushed:
 
 ```sh
-dc up -d --build
+export RELEASE_TAG=<full-40-character-git-sha>
+export IMAGE_REGISTRY=<private-registry>/<repository-prefix>
+docker compose --env-file <release-config-with-nonsecret-required-values> \
+  -f docker-compose.yml \
+  -f infrastructure/caddy/docker-compose.production.yml \
+  -f docker-compose.production-observability.yml \
+  config --lock-image-digests -o "$RELEASE_TAG.images.yml"
+```
+
+Review that every service has `image: ...@sha256:<64 hex characters>`, store
+the lock as a release artifact, and copy it to the VM without modification.
+
+## 5. Immutable deployment
+
+```sh
+# `lock` is the reviewed CI-produced digest override for this Git SHA.
+lock=/etc/barber-appointment/releases/<git-sha>.images.yml
+dc_locked="docker compose --env-file /etc/barber-appointment/production.env -p barber-production -f docker-compose.yml -f infrastructure/caddy/docker-compose.production.yml -f docker-compose.production-observability.yml -f $lock"
+
+# Mandatory read-only gate. It does not start containers.
+PRODUCTION_ENV_FILE=/etc/barber-appointment/production.env scripts/production/preflight.sh
+
+# Pull exactly the locked digests, inspect the rendered change, then apply.
+$dc_locked pull
+$dc_locked config --images
+$dc_locked up -d --no-build --remove-orphans
 ```
 
 Dependency ordering (via `depends_on`/healthchecks, already encoded in the
 Compose files) is: `postgres`/`redis`/`nats` healthy -> per-service
 `*-migrate` completes -> service starts -> `gateway-service` healthy ->
 `caddy` starts (needs `gateway-service`, `tenant-service`, `admin-web`,
-`booking-web` all healthy). `admin-web`/`booking-web`/`gateway-service` are
+`booking-web` and `platform-admin-web` all healthy). The three web apps and `gateway-service` are
 `ports: !reset []` in production - only `caddy` publishes host ports
-(80/443), everything else is reachable only inside the `private` network.
+(80/443). Auth, customer, and notification additionally join the outbound
+`egress` bridge so they can reach the configured SMTP provider; they still
+publish no ports, and databases and other backends remain only on the
+`internal: true` `private` network.
+
+Production sets `SAAS_DOMAIN=shearx.app` and
+`PLATFORM_ADMIN_HOST=platform.shearx.app`. The apex is an explicit Caddy site
+that serves a static safe placeholder until a separate marketing application
+exists. The operator control plane is served only at `PLATFORM_ADMIN_HOST`. Configure
+`PLATFORM_ADMIN_EMAIL`, a salted scrypt password digest in
+`PLATFORM_ADMIN_PASSWORD_SCRYPT`, and an independent random
+`PLATFORM_SESSION_SECRET` (32+ characters). Tenant OWNER credentials cannot
+authenticate this surface, and its infrastructure token is held only by the
+server-side frontend proxy.
+
+Locally, use `http://platform.localhost` through the base Compose Caddy edge.
+The platform frontend is not published on a raw host port. The hostname is
+routed directly to `platform-admin-web`; it never enters gateway tenant-domain
+resolution.
+
+The apex and platform host are both declared before Caddy's hostless HTTPS
+tenant catch-all. Tenant booking/admin domains therefore continue through
+gateway-service with the original `Host` header, while neither `shearx.app`
+nor `platform.shearx.app` depends on tenant hostname resolution.
+
+### Name.com DNS
+
+Create these records before the production preflight:
+
+```text
+Type  Host      Answer
+A     @         35.198.188.47
+A     platform  35.198.188.47
+```
+
+Do not add AAAA records unless IPv6 is actually configured on the VM. Add each
+tenant booking/admin hostname as its own A record pointing to the same static
+IP, then register and verify that hostname through tenant-service. Caddy's
+on-demand TLS authorization remains unchanged for tenant domains.
 
 Verify:
 ```sh
 dc ps                              # everything healthy, none restarting
 curl -sf https://<your-domain>/api/v1/public/config   # gateway reachable via Caddy
+SMTP_ADDRESS="$SMTP_ADDRESS" PRODUCTION_ENV_FILE=/etc/barber-appointment/production.env \
+  scripts/ci/smtp-connectivity.sh  # TCP path from all three email senders
 ```
 
 ## 6. Shutdown
@@ -227,14 +310,13 @@ Point both scripts at the production project/files via
 
 ## 10. Failed-deployment rollback
 
-This repo has no blue/green or canary tooling - a deploy is `dc up -d
---build` against the new image(s)/config in place. To roll back:
+This repo has no blue/green or canary tooling. A deploy updates containers in
+place from a reviewed digest lock. To roll back:
 
-1. **Application code/image only** (no new migration shipped): re-deploy
-   the previous known-good commit -
-   `git checkout <previous-tag-or-sha> -- .` (or check out that ref
-   entirely) then `dc up -d --build`. Since Postgres schema is unchanged,
-   this is safe and immediate.
+1. **Application code/image only** (no new migration shipped): select the
+   previously retained environment/config revision and its immutable image
+   lock, run preflight, then execute `pull` and `up -d --no-build` using the
+   same `dc_locked` command shape from section 5. Never rebuild an old tag.
 2. **A new migration shipped and is suspected of causing the failure**:
    migrations are forward-only (§7) - do not attempt to hand-edit
    already-applied migration state. Options, in order of preference:
@@ -280,16 +362,15 @@ to `1` on `/metrics` for `auth-service`, `tenant-service`, and
 
 ## 12. Observability checks
 
-(Full detail: Phase 7A. Dev-only stack: `docker-compose.observability.yml`,
-**never** applied to production - see that file's own comment header.)
+(The development stack remains `docker-compose.observability.yml`. Production
+uses the separate `docker-compose.production-observability.yml` overlay.)
 
-Production has no bundled Prometheus/Grafana; each backend and the gateway
-expose `/metrics` (Prometheus exposition format) on their private port only
-- never proxied publicly (verified by
+Production bundles private Prometheus, Alertmanager, OTEL Collector, Tempo,
+Loki, Alloy, and loopback-only Grafana. Each backend and the gateway expose
+`/metrics` on their private port only - never proxied publicly (verified by
 `gateway-service`'s `TestMetricsRouteTableNeverProxiesToABackend`/
-`TestMetricsIsServedLocallyNeverProxied` tests). Point your own external
-Prometheus (or an ops host inside the `private` network) at each service's
-`:8080/metrics`.
+`TestMetricsIsServedLocallyNeverProxied` tests). The bundled Prometheus scrapes
+each service at `:8080/metrics` over the private network.
 
 Minimum checks after any deploy or incident:
 - `dependency_up{service=<svc>,dependency=<postgres|redis|nats>}` is `1`
@@ -302,8 +383,30 @@ Minimum checks after any deploy or incident:
   see Phase 6.6/6.6-follow-through).
 - `http_requests_total{status=~"5.."}` is not elevated for any service.
 - Every `/ready` returns 200 (`dc ps` health status reflects this already).
-- OpenTelemetry tracing is optional in production (unset
-  `OTEL_EXPORTER_OTLP_ENDPOINT` = no-op tracer, never blocks startup/
-  readiness) - if you do wire a collector in production, point
-  `OTEL_EXPORTER_OTLP_ENDPOINT` at it via the same overlay pattern as the
-  dev stack, on the `private` network only.
+- OpenTelemetry exports privately to the collector and durable local Tempo.
+  Confirm recent traces in Grafana and collector export failures remain zero.
+
+## 13. Phase 8A host provisioning and preflight
+
+The authoritative single-VM sizing, disk, firewall, DNS, registry, SMTP,
+secret-file, and observability requirements are in
+`infrastructure/production/README.md`. The safe secret inventory is
+`infrastructure/production/production.env.example`; never edit it with real
+values.
+
+Before every first deployment or rollback, run the read-only preflight:
+
+```sh
+sudo PRODUCTION_ENV_FILE=/etc/barber-appointment/production.env \
+  /opt/barber-appointment/scripts/production/preflight.sh
+```
+
+It validates the complete secret inventory and rejects placeholders; requires
+`PLATFORM_ADMIN_HOST=platform.$SAAS_DOMAIN` and both explicit edge hosts in
+`PRODUCTION_DOMAINS`; checks initial DNS records against the expected static IP; requires a dedicated disk
+and minimum free space; resolves the full Compose graph; rejects every image
+without a sha256 digest; checks Redis/NATS authentication wiring, SMTP TCP
+reachability, OTEL/Grafana wiring, Prometheus rules, Alertmanager receiver
+configuration, and authenticated access to the initialized encrypted backup
+repository. It does not start a container other than short-lived pinned config
+and storage clients and never runs `compose up`.

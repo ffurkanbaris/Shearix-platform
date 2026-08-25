@@ -40,7 +40,7 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   }
   let response: Response;
   try { response = await fetch(`/api${path}`, { ...options, headers, body, credentials: "include" }); }
-  catch { throw new ApiError(0, "The service is temporarily unavailable.", "network_error"); }
+  catch { throw new ApiError(0, "Hizmete şu anda ulaşılamıyor.", "network_error"); }
   if (!response.ok) {
     const detail = await errorDetail(response);
     const error = new ApiError(response.status, detail);

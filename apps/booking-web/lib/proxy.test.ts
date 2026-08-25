@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createServer } from "node:http";
 import { proxyConfig, proxyGateway, proxyRequestHeaders } from "../../shared/server-proxy";
 
 describe("gateway proxy", () => {
@@ -14,6 +15,13 @@ describe("gateway proxy", () => {
     const response = await proxyGateway(new Request("http://tenant.test/api/v1/public/appointments"), ["v1", "public", "appointments"], global.fetch);
     expect(response.status).toBe(409); expect(await response.json()).toEqual({ error: "conflict" }); expect(response.headers.get("content-type")).toContain("application/json"); expect(response.headers.getSetCookie()).toEqual(["session=one; HttpOnly; SameSite=Lax", "refresh=two; HttpOnly; Secure"]);
   });
+  it("returns upstream 307 redirects without rewriting their location or body", async () => {
+    const upstream = vi.fn().mockResolvedValue(new Response("redirecting", { status: 307, headers: { location: "/login?next=%2Faccount", "content-type": "text/plain" } }));
+    const response = await proxyGateway(new Request("http://booking.localhost/api/v1/public/customer/profile", { headers: { host: "booking.localhost" } }), ["v1", "public", "customer", "profile"], upstream);
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("/login?next=%2Faccount");
+    expect(await response.text()).toBe("redirecting");
+  });
   it("forwards method, query, body, and only allowed request headers", async () => {
     const upstream = vi.fn().mockResolvedValue(new Response("{}", { headers: { "content-type": "application/json" } }));
     global.fetch = upstream;
@@ -23,6 +31,33 @@ describe("gateway proxy", () => {
     expect(init.method).toBe("POST"); expect(init.headers).toBeInstanceOf(Headers);
     expect((init.headers as Headers).get("x-tenant-id")).toBeNull(); expect((init.headers as Headers).get("content-type")).toBe("application/json");
     expect(new TextDecoder().decode(init.body as ArrayBuffer)).toContain("start_at");
+  });
+  it("preserves the tenant Host on the real Node transport while connecting to the gateway address", async () => {
+    let receivedHost = "";
+    let receivedTenant = "";
+    let receivedInternalToken = "";
+    const server = createServer((request, response) => {
+      receivedHost = request.headers.host ?? "";
+      receivedTenant = String(request.headers["x-tenant-id"] ?? "");
+      receivedInternalToken = String(request.headers["x-internal-token"] ?? "");
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ app_type: "booking" }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("test gateway did not bind");
+      vi.stubEnv("GATEWAY_URL", `http://127.0.0.1:${address.port}`);
+      const response = await proxyGateway(new Request("http://booking.localhost:3001/api/v1/public/config", {
+        headers: { host: "booking.localhost:3001", "x-tenant-id": "spoof", "x-internal-token": "spoof" },
+      }), ["v1", "public", "config"]);
+      expect(response.status).toBe(200);
+      expect(receivedHost).toBe("booking.localhost:3001");
+      expect(receivedTenant).toBe("");
+      expect(receivedInternalToken).toBe("");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
   });
   it("maps network failures to 502", async () => {
     global.fetch = vi.fn().mockRejectedValue(new TypeError("network"));

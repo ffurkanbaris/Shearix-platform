@@ -36,7 +36,7 @@ export function AuthGate({ children }: Readonly<{ children: React.ReactNode }>) 
         expire();
         return;
       }
-      setFailure("We could not verify your session. Check the connection and try again.");
+      setFailure("Oturumunuz doğrulanamadı. Bağlantınızı kontrol edip tekrar deneyin.");
     }
   }, [expire, pathname, router]);
 
@@ -52,8 +52,8 @@ export function AuthGate({ children }: Readonly<{ children: React.ReactNode }>) 
   }, [expire]);
 
   if (failure) {
-    return <main className="centered-state"><h1>Connection problem</h1><p>{failure}</p><button className="button primary" onClick={() => void refresh()}>Try again</button></main>;
+    return <main className="centered-state"><h1>Bağlantı sorunu</h1><p>{failure}</p><button className="button primary" onClick={() => void refresh()}>Tekrar dene</button></main>;
   }
-  if (!principal) return <main className="centered-state" aria-live="polite">Loading your workspace…</main>;
+  if (!principal) return <main className="centered-state" aria-live="polite">Çalışma alanınız yükleniyor…</main>;
   return <SessionContext.Provider value={{ principal, refresh, expire }}>{children}</SessionContext.Provider>;
 }

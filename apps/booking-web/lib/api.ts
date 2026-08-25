@@ -8,12 +8,12 @@ export class ApiError extends Error {
 }
 
 function defaultError(status: number): string {
-  if (status === 400) return "Please check the information you entered.";
-  if (status === 404) return "This booking page is unavailable.";
-  if (status === 409) return "That time is no longer available.";
-  if (status === 429) return "Too many requests. Please wait and try again.";
-  if (status >= 500) return "The booking service is temporarily unavailable.";
-  return "Something went wrong. Please try again.";
+  if (status === 400) return "Lütfen girdiğiniz bilgileri kontrol edin.";
+  if (status === 404) return "Bu randevu sayfası kullanılamıyor.";
+  if (status === 409) return "Bu saat artık müsait değil.";
+  if (status === 429) return "Çok fazla istek gönderildi. Lütfen bekleyip tekrar deneyin.";
+  if (status >= 500) return "Randevu hizmeti geçici olarak kullanılamıyor.";
+  return "Bir sorun oluştu. Lütfen tekrar deneyin.";
 }
 
 type RequestOptions = Omit<RequestInit, "body"> & { body?: unknown; signal?: AbortSignal };
@@ -37,7 +37,7 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   }
   let response: Response;
   try { response = await fetch(`/api${path}`, { ...options, headers, body, credentials: "include" }); }
-  catch { throw new ApiError(0, "The booking service is temporarily unavailable.", "network_error"); }
+  catch { throw new ApiError(0, "Randevu hizmeti geçici olarak kullanılamıyor.", "network_error"); }
   if (!response.ok) {
     const error = new ApiError(response.status, await message(response));
     if (response.status === 401 && typeof window !== "undefined") window.dispatchEvent(new Event("barber:customer-session-expired"));

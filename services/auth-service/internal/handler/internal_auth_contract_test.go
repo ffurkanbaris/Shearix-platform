@@ -26,6 +26,7 @@ func TestInternalAuthContract(t *testing.T) {
 		authcontract.NewRoute(http.MethodGet, "/internal/v1/auth/members/:id/barber-eligibility", true, "admin", 401, 401, 401),
 		authcontract.NewRoute(http.MethodPost, "/internal/v1/auth/change-password", true, "admin", 401, 401, 401),
 		authcontract.NewRoute(http.MethodPost, "/internal/v1/auth/forgot-password", true, "admin", 401, 401, 401),
+		authcontract.NewRoute(http.MethodGet, "/internal/v1/platform/tenants/:id/owners", false, "", 401, 0, 0),
 	}
 	authcontract.Run(t, app, routes)
 }

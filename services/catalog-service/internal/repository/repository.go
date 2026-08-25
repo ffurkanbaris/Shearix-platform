@@ -18,7 +18,7 @@ type Repository struct{ pool *pgxpool.Pool }
 
 func New(p *pgxpool.Pool) Repository { return Repository{p} }
 func (r Repository) Services(ctx context.Context, t uuid.UUID, activeOnly bool) ([]domain.Service, error) {
-	var out []domain.Service
+	out := make([]domain.Service, 0)
 	e := db.WithTenantTx(ctx, r.pool, t, func(tx pgx.Tx) error {
 		if activeOnly {
 			rows, x := generated.New(tx).ListActiveServices(ctx, pgtype.UUID{Bytes: [16]byte(t), Valid: true})
@@ -138,7 +138,7 @@ func (r Repository) Assign(ctx context.Context, t, b, s uuid.UUID) error {
 	})
 }
 func (r Repository) Assignments(ctx context.Context, t, b uuid.UUID) ([]domain.Service, error) {
-	var out []domain.Service
+	out := make([]domain.Service, 0)
 	e := db.WithTenantTx(ctx, r.pool, t, func(tx pgx.Tx) error {
 		rows, x := tx.Query(ctx, `SELECT s.id,s.name,s.duration_minutes,s.buffer_before_minutes,s.buffer_after_minutes,p.amount::text,p.currency,s.active FROM public.barber_services bs JOIN public.services s ON s.id=bs.service_id AND s.tenant_id=bs.tenant_id JOIN public.pricing p ON p.service_id=s.id AND p.tenant_id=s.tenant_id WHERE bs.tenant_id=$1 AND bs.barber_id=$2 AND bs.active=true ORDER BY s.name`, t, b)
 		if x != nil {

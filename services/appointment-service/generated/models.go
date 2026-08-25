@@ -46,12 +46,14 @@ type IdempotencyKey struct {
 }
 
 type OutboxEvent struct {
-	ID           pgtype.UUID
-	TenantID     pgtype.UUID
-	AggregateID  pgtype.UUID
-	Type         string
-	Payload      []byte
-	CreatedAt    pgtype.Timestamptz
-	PublishedAt  pgtype.Timestamptz
-	PublishingAt pgtype.Timestamptz
+	ID              pgtype.UUID
+	TenantID        pgtype.UUID
+	AggregateID     pgtype.UUID
+	Type            string
+	Payload         []byte
+	CreatedAt       pgtype.Timestamptz
+	PublishedAt     pgtype.Timestamptz
+	PublishingAt    pgtype.Timestamptz
+	PublishAttempts int32
+	FailedAt        pgtype.Timestamptz
 }

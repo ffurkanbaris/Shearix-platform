@@ -34,6 +34,9 @@ func (f *fakeService) Members(context.Context, uuid.UUID) ([]domain.Member, erro
 	f.membersCalled = true
 	return []domain.Member{}, nil
 }
+func (f *fakeService) Owners(context.Context, uuid.UUID) ([]domain.OwnerState, error) {
+	return []domain.OwnerState{}, nil
+}
 func (f *fakeService) Member(context.Context, uuid.UUID, uuid.UUID) (domain.Member, error) {
 	f.memberCalled = true
 	return domain.Member{}, nil

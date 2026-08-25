@@ -52,12 +52,60 @@ func (h Handler) Register(app *fiber.App) {
 	// These control-plane endpoints are private-network only. Gateway verifies
 	// a separate platform-admin credential before forwarding with internal auth.
 	app.Post("/internal/v1/platform/tenants", h.createTenant)
+	app.Get("/internal/v1/platform/tenants", h.tenants)
 	app.Get("/internal/v1/platform/tenants/:id", h.tenant)
+	app.Post("/internal/v1/platform/tenants/:id/activate", h.setTenantStatus("active"))
+	app.Post("/internal/v1/platform/tenants/:id/suspend", h.setTenantStatus("suspended"))
+	app.Get("/internal/v1/platform/audit", h.platformAudit)
 	app.Post("/internal/v1/platform/tenants/:id/domains", h.createDomain)
 	app.Get("/internal/v1/platform/tenants/:id/domains", h.domains)
 	app.Post("/internal/v1/platform/tenants/:id/domains/:domain_id/verify", h.verifyDomain)
 	app.Post("/internal/v1/platform/tenants/:id/domains/:domain_id/activate", h.activateDomain)
 	app.Post("/internal/v1/platform/tenants/:id/domains/:domain_id/deactivate", h.deactivateDomain)
+}
+
+func (h Handler) tenants(c fiber.Ctx) error {
+	if !h.internal(c) {
+		return c.SendStatus(fiber.StatusUnauthorized)
+	}
+	result, err := h.service.Tenants(c.Context())
+	if err != nil {
+		return c.SendStatus(500)
+	}
+	return c.JSON(result)
+}
+
+func (h Handler) setTenantStatus(status string) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		if !h.internal(c) {
+			return c.SendStatus(fiber.StatusUnauthorized)
+		}
+		result, err := h.service.SetTenantStatus(c.Context(), c.Params("id"), status, c.Get("X-Platform-Actor"), c.Get(tenantctx.RequestIDHeader))
+		if errors.Is(err, service.ErrInvalidInput) {
+			return c.SendStatus(400)
+		}
+		if errors.Is(err, repository.ErrNotFound) {
+			return c.SendStatus(404)
+		}
+		if err != nil {
+			return c.SendStatus(500)
+		}
+		return c.JSON(result)
+	}
+}
+
+func (h Handler) platformAudit(c fiber.Ctx) error {
+	if !h.internal(c) {
+		return c.SendStatus(fiber.StatusUnauthorized)
+	}
+	result, err := h.service.PlatformAudit(c.Context(), c.Query("tenant_id"))
+	if errors.Is(err, service.ErrInvalidInput) {
+		return c.SendStatus(400)
+	}
+	if err != nil {
+		return c.SendStatus(500)
+	}
+	return c.JSON(result)
 }
 
 // internalSettings is for private service-to-service consumers such as

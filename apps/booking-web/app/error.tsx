@@ -1,2 +1,2 @@
 "use client";
-export default function Error({ reset }: { error: Error; reset: () => void }) { return <main className="page centered"><h1>We could not load this page</h1><p>Please try again.</p><button className="book-button" onClick={reset}>Try again</button></main>; }
+export default function Error({ reset }: { error: Error; reset: () => void }) { return <main className="page centered"><h1>Bu sayfa yüklenemedi</h1><p>Lütfen tekrar deneyin.</p><button className="book-button" onClick={reset}>Tekrar dene</button></main>; }

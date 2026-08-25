@@ -25,7 +25,7 @@ function LoginForm() {
 	  router.replace(principal.must_change_password ? "/settings" : safeNext(search.get("next")));
       router.refresh();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "Unable to sign in.");
+      setError(cause instanceof ApiError ? cause.message : "Giriş yapılamadı.");
     } finally {
       setLoading(false);
     }
@@ -35,13 +35,13 @@ function LoginForm() {
     <main className="login-page">
       <section className="login-card" aria-labelledby="login-title">
         <div className="login-logo" aria-hidden="true">B</div>
-        <h1 id="login-title">Sign in to your panel</h1>
+        <h1 id="login-title">Yönetim paneline giriş yapın</h1>
         <p className="muted" style={{ marginBottom: "1.5rem", marginTop: ".25rem" }}>
-		  Use the email address and password assigned to your staff account.
+			  Personel hesabınıza tanımlanan e-posta adresini ve parolayı kullanın.
         </p>
         <form onSubmit={submit} className="form-stack">
           <label>
-			Email
+				E-posta
             <input
 			  id="login-email"
               autoComplete="username"
@@ -53,7 +53,7 @@ function LoginForm() {
             />
           </label>
           <label>
-            Password
+            Parola
             <input
               id="login-password"
               autoComplete="current-password"
@@ -65,7 +65,7 @@ function LoginForm() {
           </label>
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="button primary" disabled={loading} type="submit">
-            {loading ? "Signing in…" : "Sign in"}
+            {loading ? "Giriş yapılıyor…" : "Giriş yap"}
           </button>
         </form>
       </section>
@@ -73,4 +73,4 @@ function LoginForm() {
   );
 }
 
-export default function LoginPage() { return <Suspense fallback={<main className="centered-state" aria-live="polite">Loading sign in…</main>}><LoginForm /></Suspense>; }
+export default function LoginPage() { return <Suspense fallback={<main className="centered-state" aria-live="polite">Giriş ekranı yükleniyor…</main>}><LoginForm /></Suspense>; }

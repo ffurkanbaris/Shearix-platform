@@ -79,7 +79,7 @@ export default function SchedulesPage() {
     }
     setFormError(""); setSaving(true);
     try { await apiClient.put<void>(`/v1/admin/barbers/${selectedID}/working-hours`, payload); await loadSchedule(selectedID); }
-    catch (cause) { setFormError(cause instanceof ApiError ? cause.message : "Unable to save working hours."); }
+    catch (cause) { setFormError(cause instanceof ApiError ? cause.message : "Çalışma saatleri kaydedilemedi."); }
     finally { setSaving(false); }
   }
 
@@ -89,7 +89,7 @@ export default function SchedulesPage() {
     if (!intervals) { setFormError("Custom hours need intervals; vacation and unavailable overrides must not include intervals."); return; }
     setFormError(""); setSaving(true);
     try { await apiClient.post(`/v1/admin/barbers/${selectedID}/overrides`, { date: override.date, kind: override.kind, intervals }); setOverride(emptyOverride()); await loadSchedule(selectedID); }
-    catch (cause) { setFormError(cause instanceof ApiError ? cause.message : "Unable to save the override."); }
+    catch (cause) { setFormError(cause instanceof ApiError ? cause.message : "Özel gün ayarı kaydedilemedi."); }
     finally { setSaving(false); }
   }
 
@@ -99,14 +99,14 @@ export default function SchedulesPage() {
     if (!intervals) { setFormError("Custom hours need intervals; vacation and unavailable overrides must not include intervals."); return; }
     setFormError(""); setSaving(true);
     try { await apiClient.patch(`/v1/admin/barbers/${selectedID}/overrides/${editingOverride.id}`, { date: editOverride.date, kind: editOverride.kind, intervals }); closeEditOverride(); await loadSchedule(selectedID); }
-    catch (cause) { setFormError(cause instanceof ApiError ? cause.message : "Unable to update the override."); }
+    catch (cause) { setFormError(cause instanceof ApiError ? cause.message : "Özel gün ayarı güncellenemedi."); }
     finally { setSaving(false); }
   }
 
   async function deleteOverride() {
     if (!selectedID || !deleteOverrideTarget) return; setSaving(true);
     try { await apiClient.delete(`/v1/admin/barbers/${selectedID}/overrides/${deleteOverrideTarget.id}`); setDeleteOverrideTarget(undefined); await loadSchedule(selectedID); }
-    catch (cause) { setFormError(cause instanceof ApiError ? cause.message : "Unable to delete the override."); setDeleteOverrideTarget(undefined); }
+    catch (cause) { setFormError(cause instanceof ApiError ? cause.message : "Özel gün ayarı silinemedi."); setDeleteOverrideTarget(undefined); }
     finally { setSaving(false); }
   }
 
@@ -114,32 +114,32 @@ export default function SchedulesPage() {
     event.preventDefault(); if (!selectedID || !block.start_at || !block.end_at) return;
     setFormError(""); setSaving(true);
     try { await apiClient.post(`/v1/admin/barbers/${selectedID}/blocked-periods`, { start_at: new Date(block.start_at).toISOString(), end_at: new Date(block.end_at).toISOString() }); setBlock({ start_at: "", end_at: "" }); await loadSchedule(selectedID); }
-    catch (cause) { setFormError(cause instanceof ApiError ? cause.message : "Unable to save the blocked period."); }
+    catch (cause) { setFormError(cause instanceof ApiError ? cause.message : "Engellenmiş zaman kaydedilemedi."); }
     finally { setSaving(false); }
   }
 
   async function deleteBlock() {
     if (!selectedID || !deleteBlockTarget) return; setSaving(true);
     try { await apiClient.delete(`/v1/admin/barbers/${selectedID}/blocked-periods/${deleteBlockTarget.id}`); setDeleteBlockTarget(undefined); await loadSchedule(selectedID); }
-    catch (cause) { setFormError(cause instanceof ApiError ? cause.message : "Unable to delete the blocked period."); setDeleteBlockTarget(undefined); }
+    catch (cause) { setFormError(cause instanceof ApiError ? cause.message : "Engellenmiş zaman silinemedi."); setDeleteBlockTarget(undefined); }
     finally { setSaving(false); }
   }
 
-  if (error) return <><PageHeader title="Schedules" /><ErrorNotice error={error} onRetry={() => { setError(undefined); void loadSchedule(selectedID); }} /></>;
-  if (!allBarbers) return <><PageHeader title="Schedules" description="Configure working hours and exceptions." /><LoadingState /></>;
+  if (error) return <><PageHeader title="Çalışma Saatleri" /><ErrorNotice error={error} onRetry={() => { setError(undefined); void loadSchedule(selectedID); }} /></>;
+  if (!allBarbers) return <><PageHeader title="Çalışma Saatleri" description="Çalışma saatlerini ve istisnaları yönetin." /><LoadingState /></>;
   if (!barbers.length) return (
     <>
-      <PageHeader title="Schedules" description="Configure working hours and exceptions." />
+      <PageHeader title="Çalışma Saatleri" description="Çalışma saatlerini ve istisnaları yönetin." />
       <EmptyState
-        title={principal.role === "BARBER" ? "No linked barber" : "No barbers yet"}
-        body={principal.role === "BARBER" ? "Your account needs an eligible barber identity link before you can manage a schedule." : "Create a barber before configuring working hours and exceptions."}
+        title={principal.role === "BARBER" ? "Bağlı berber yok" : "Henüz berber yok"}
+        body={principal.role === "BARBER" ? "Çalışma planını yönetebilmeniz için hesabınız uygun bir berber kimliğine bağlanmalıdır." : "Çalışma saatlerini ve istisnaları ayarlamadan önce bir berber oluşturun."}
       />
     </>
   );
 
   return (
     <>
-      <PageHeader title="Schedules" description={principal.role === "BARBER" ? "Your linked barber schedule." : "Working hours, date overrides, and blocked periods."} />
+      <PageHeader title="Çalışma Saatleri" description={principal.role === "BARBER" ? "Bağlı berber çalışma planınız." : "Çalışma saatleri, tarih istisnaları ve engellenmiş zamanlar."} />
 
       {/* Barber selector */}
       <div className="barber-selector">
@@ -151,17 +151,17 @@ export default function SchedulesPage() {
         </label>
       </div>
 
-      {!schedule ? <LoadingState label="Loading schedule…" /> : (
+      {!schedule ? <LoadingState label="Takvim yükleniyor…" /> : (
         <>
           {/* Weekly hours */}
           <section className="panel">
             <form onSubmit={saveHours}>
               <div className="panel-header">
                 <div className="panel-header-text">
-                  <h2>Weekly working hours</h2>
-                  <p className="muted">Use one or more intervals, e.g. <code>09:00-12:00, 13:00-18:00</code>. Leave blank to close the day.</p>
+                  <h2>Haftalık çalışma saatleri</h2>
+                  <p className="muted">Bir veya daha fazla aralık girin; ör. <code>09:00-12:00, 13:00-18:00</code>. Günü kapalı bırakmak için boş bırakın.</p>
                 </div>
-                {canEdit && <button className="button primary sm" disabled={saving} type="submit">{saving ? "Saving…" : "Save hours"}</button>}
+                {canEdit && <button className="button primary sm" disabled={saving} type="submit">{saving ? "Kaydediliyor…" : "Saatleri kaydet"}</button>}
               </div>
 
               <ScheduleGrid
@@ -173,7 +173,7 @@ export default function SchedulesPage() {
 
               {schedule.working_hours.length === 0 && (
                 <div className="notice muted" style={{ marginBottom: "1rem" }}>
-                  This barber is currently closed every day. Add intervals below to make time bookable.
+                  This barber is currently closed every day. Aralık ekleyin below to make time bookable.
                 </div>
               )}
 
@@ -184,7 +184,7 @@ export default function SchedulesPage() {
                     <input
                       value={hours[weekday] ?? ""}
                       onChange={(e) => setHours({ ...hours, [weekday]: e.target.value })}
-                      placeholder="Closed"
+                      placeholder="Kapalı"
                       disabled={!canEdit || saving}
                     />
                   </div>
@@ -201,8 +201,8 @@ export default function SchedulesPage() {
             <section className="panel">
               <div className="panel-header">
                 <div className="panel-header-text">
-                  <h2>Date overrides</h2>
-                  <p className="muted">Weekly hours apply unless a date override is set.</p>
+                  <h2>Özel gün ayarları</h2>
+                  <p className="muted">Belirli bir tarih için özel ayar yoksa haftalık saatler uygulanır.</p>
                 </div>
 
               </div>
@@ -210,24 +210,24 @@ export default function SchedulesPage() {
               {showAddOverride && canEdit && (
                 <form onSubmit={addOverride} className="form-stack" style={{ marginBottom: "1rem", paddingBottom: "1rem", borderBottom: "1px solid var(--line-2)" }}>
                   <OverrideFields form={override} setForm={setOverride} disabled={saving} />
-                  <button className="button primary sm" disabled={saving} type="submit">{saving ? "Saving…" : "Add override"}</button>
+                  <button className="button primary sm" disabled={saving} type="submit">{saving ? "Kaydediliyor…" : "Özel gün ekle"}</button>
                 </form>
               )}
 
               {schedule.overrides.length === 0 ? (
-                <EmptyState title="No overrides" body="Weekly hours apply unless you add a date-specific override." />
+                <EmptyState title="Özel gün ayarı yok" body="Weekly hours apply unless you add a date-specific override." />
               ) : (
                 <div className="list">
                   {schedule.overrides.map((item) => (
                     <div className="list-row" key={item.id}>
                       <div className="list-row-main">
                         <strong>{item.date} · {item.kind}</strong>
-                        <span>{item.intervals?.length ? textIntervals(item.intervals) : "All day"}</span>
+                        <span>{item.intervals?.length ? textIntervals(item.intervals) : "Tüm gün"}</span>
                       </div>
                       {canEdit && (
                         <div className="list-row-actions">
-                          <button className="button xs secondary" onClick={() => openEditOverride(item)} type="button">Edit</button>
-                          <button className="button xs danger" onClick={() => setDeleteOverrideTarget(item)} type="button">Delete</button>
+                          <button className="button xs secondary" onClick={() => openEditOverride(item)} type="button">Düzenle</button>
+                          <button className="button xs danger" onClick={() => setDeleteOverrideTarget(item)} type="button">Sil</button>
                         </div>
                       )}
                     </div>
@@ -240,8 +240,8 @@ export default function SchedulesPage() {
             <section className="panel">
               <div className="panel-header">
                 <div className="panel-header-text">
-                  <h2>Blocked periods</h2>
-                  <p className="muted">Ad-hoc unavailable time slots.</p>
+                  <h2>Engellenmiş zamanlar</h2>
+                  <p className="muted">Geçici olarak uygun olmayan zaman aralıkları.</p>
                 </div>
 
               </div>
@@ -250,12 +250,12 @@ export default function SchedulesPage() {
                 <form onSubmit={addBlock} className="form-stack" style={{ marginBottom: "1rem", paddingBottom: "1rem", borderBottom: "1px solid var(--line-2)" }}>
                   <label>Start<input type="datetime-local" value={block.start_at} onChange={(e) => setBlock({ ...block, start_at: e.target.value })} disabled={saving} required /></label>
                   <label>End<input type="datetime-local" value={block.end_at} onChange={(e) => setBlock({ ...block, end_at: e.target.value })} disabled={saving} required /></label>
-                  <button className="button primary sm" disabled={saving} type="submit">{saving ? "Saving…" : "Block time"}</button>
+                  <button className="button primary sm" disabled={saving} type="submit">{saving ? "Kaydediliyor…" : "Saati engelle"}</button>
                 </form>
               )}
 
               {schedule.blocked_periods.length === 0 ? (
-                <EmptyState title="No blocked periods" body="Use one for ad-hoc unavailable time." />
+                <EmptyState title="Engellenmiş zaman yok" body="Geçici olarak uygun olunmayan saatleri buradan ekleyin." />
               ) : (
                 <div className="list">
                   {schedule.blocked_periods.map((item) => (
@@ -265,7 +265,7 @@ export default function SchedulesPage() {
                         <span>to {toLocalInput(item.end_at).replace("T", " ")}</span>
                       </div>
                       {canEdit && (
-                        <button className="button xs danger" onClick={() => setDeleteBlockTarget(item)} type="button">Delete</button>
+                        <button className="button xs danger" onClick={() => setDeleteBlockTarget(item)} type="button">Sil</button>
                       )}
                     </div>
                   ))}
@@ -283,18 +283,18 @@ export default function SchedulesPage() {
             <OverrideFields form={editOverride} setForm={setEditOverride} disabled={saving} />
             <FormError value={formError} />
             <div className="dialog-actions">
-              <button className="button secondary" disabled={saving} onClick={closeEditOverride} type="button">Cancel</button>
-              <button className="button primary" disabled={saving}>{saving ? "Saving…" : "Save changes"}</button>
+              <button className="button secondary" disabled={saving} onClick={closeEditOverride} type="button">Vazgeç</button>
+              <button className="button primary" disabled={saving}>{saving ? "Kaydediliyor…" : "Değişiklikleri kaydet"}</button>
             </div>
           </form>
         </Modal>
       )}
 
       {deleteOverrideTarget && (
-        <ConfirmDialog title="Delete schedule override?" description="This date-specific override will be removed and weekly working hours will apply again." confirmLabel="Delete override" busy={saving} onCancel={() => setDeleteOverrideTarget(undefined)} onConfirm={() => void deleteOverride()} />
+        <ConfirmDialog title="Özel gün ayarı silinsin mi?" description="Bu tarihe özel ayar kaldırılacak ve haftalık çalışma saatleri yeniden uygulanacak." confirmLabel="Özel gün ayarını sil" busy={saving} onCancel={() => setDeleteOverrideTarget(undefined)} onConfirm={() => void deleteOverride()} />
       )}
       {deleteBlockTarget && (
-        <ConfirmDialog title="Delete blocked period?" description="This time will no longer be blocked and may become available for booking." confirmLabel="Delete blocked period" busy={saving} onCancel={() => setDeleteBlockTarget(undefined)} onConfirm={() => void deleteBlock()} />
+        <ConfirmDialog title="Engellenmiş zaman silinsin mi?" description="Bu zaman artık engellenmeyecek ve randevuya açılabilecek." confirmLabel="Engellenmiş zamanı sil" busy={saving} onCancel={() => setDeleteBlockTarget(undefined)} onConfirm={() => void deleteBlock()} />
       )}
     </>
   );
@@ -303,7 +303,7 @@ export default function SchedulesPage() {
 function OverrideFields({ form, setForm, disabled }: { form: OverrideForm; setForm: (f: OverrideForm) => void; disabled: boolean }) {
   return (
     <>
-      <label>Date<input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required disabled={disabled} /></label>
+      <label>Tarih<input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required disabled={disabled} /></label>
       <label>Type
         <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as OverrideForm["kind"] })} disabled={disabled}>
           <option value="unavailable">Unavailable</option>

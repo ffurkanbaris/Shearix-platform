@@ -54,6 +54,16 @@ type Member struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+type OwnerState struct {
+	IdentityID         uuid.UUID `json:"identity_id"`
+	Name               string    `json:"name"`
+	Email              string    `json:"email"`
+	IdentityStatus     string    `json:"identity_status"`
+	MembershipStatus   string    `json:"membership_status"`
+	MustChangePassword bool      `json:"must_change_password"`
+	DeliveryStatus     string    `json:"delivery_status"`
+}
+
 type ChangeMemberRoleInput struct {
 	Role Role `json:"role"`
 }

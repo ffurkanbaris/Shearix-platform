@@ -1,0 +1,14 @@
+[Unit]
+Description=Verify latest Barber encrypted backup can be restored
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/barber-appointment
+EnvironmentFile=/etc/barber-appointment/production.env
+Environment=BACKUP_VERIFY_ROOT=/var/lib/barber-backup-verify
+ExecStart=/opt/barber-appointment/scripts/backup/verify-production-backup.sh
+PrivateTmp=true
+NoNewPrivileges=true

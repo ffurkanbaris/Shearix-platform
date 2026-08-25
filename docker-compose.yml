@@ -71,7 +71,7 @@ services:
       timeout: 3s
       retries: 20
   tenant-migrate:
-    image: barber-appointment-tenant-service:latest
+    image: ${IMAGE_REGISTRY:-barber-appointment}/tenant-service:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: services/tenant-service/Dockerfile}
     command: ["--migrate-only"]
     environment:
@@ -87,7 +87,7 @@ services:
     depends_on: {tenant-migrate: {condition: service_completed_successfully}}
     networks: [private]
   auth-migrate:
-    image: barber-appointment-auth-service:latest
+    image: ${IMAGE_REGISTRY:-barber-appointment}/auth-service:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: services/auth-service/Dockerfile}
     command: ["--migrate-only"]
     environment: {MIGRATION_DATABASE_URL: "postgresql://auth_db_migrator:${AUTH_DB_OWNER_PASSWORD:-auth-owner-dev-password}@postgres:5432/auth_db?sslmode=disable", DATABASE_OWNER_ROLE: auth_db_owner}
@@ -101,35 +101,35 @@ services:
     depends_on: {auth-migrate: {condition: service_completed_successfully}}
     networks: [private]
   barber-migrate:
-    image: barber-appointment-barber-service:latest
+    image: ${IMAGE_REGISTRY:-barber-appointment}/barber-service:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: services/barber-service/Dockerfile}
     command: ["--migrate-only"]
     environment: {MIGRATION_DATABASE_URL: "postgresql://barber_db_migrator:${BARBER_DB_OWNER_PASSWORD:-barber-owner-dev-password}@postgres:5432/barber_db?sslmode=disable", DATABASE_OWNER_ROLE: barber_db_owner}
     depends_on: {postgres: {condition: service_healthy}}
     networks: [private]
   catalog-migrate:
-    image: barber-appointment-catalog-service:latest
+    image: ${IMAGE_REGISTRY:-barber-appointment}/catalog-service:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: services/catalog-service/Dockerfile}
     command: ["--migrate-only"]
     environment: {MIGRATION_DATABASE_URL: "postgresql://catalog_db_migrator:${CATALOG_DB_OWNER_PASSWORD:-catalog-owner-dev-password}@postgres:5432/catalog_db?sslmode=disable", DATABASE_OWNER_ROLE: catalog_db_owner}
     depends_on: {postgres: {condition: service_healthy}}
     networks: [private]
   scheduling-migrate:
-    image: barber-appointment-scheduling-service:latest
+    image: ${IMAGE_REGISTRY:-barber-appointment}/scheduling-service:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: services/scheduling-service/Dockerfile}
     command: ["--migrate-only"]
     environment: {MIGRATION_DATABASE_URL: "postgresql://scheduling_db_migrator:${SCHEDULING_DB_OWNER_PASSWORD:-scheduling-owner-dev-password}@postgres:5432/scheduling_db?sslmode=disable", DATABASE_OWNER_ROLE: scheduling_db_owner}
     depends_on: {postgres: {condition: service_healthy}}
     networks: [private]
   appointment-migrate:
-    image: barber-appointment-appointment-service:latest
+    image: ${IMAGE_REGISTRY:-barber-appointment}/appointment-service:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: services/appointment-service/Dockerfile}
     command: ["--migrate-only"]
     environment: {MIGRATION_DATABASE_URL: "postgresql://appointment_db_migrator:${APPOINTMENT_DB_OWNER_PASSWORD:-appointment-owner-dev-password}@postgres:5432/appointment_db?sslmode=disable", DATABASE_OWNER_ROLE: appointment_db_owner}
     depends_on: {postgres: {condition: service_healthy}}
     networks: [private]
   customer-migrate:
-    image: barber-appointment-customer-service:latest
+    image: ${IMAGE_REGISTRY:-barber-appointment}/customer-service:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: services/customer-service/Dockerfile}
     command: ["--migrate-only"]
     environment: {MIGRATION_DATABASE_URL: "postgresql://customer_db_migrator:${CUSTOMER_DB_OWNER_PASSWORD:-customer-owner-dev-password}@postgres:5432/customer_db?sslmode=disable", DATABASE_OWNER_ROLE: customer_db_owner}
@@ -143,13 +143,14 @@ services:
     depends_on: {customer-migrate: {condition: service_completed_successfully}}
     networks: [private]
   notification-migrate:
-    image: barber-appointment-notification-service:latest
+    image: ${IMAGE_REGISTRY:-barber-appointment}/notification-service:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: services/notification-service/Dockerfile}
     command: ["--migrate-only"]
     environment: {MIGRATION_DATABASE_URL: "postgresql://notification_db_migrator:${NOTIFICATION_DB_OWNER_PASSWORD:-notification-owner-dev-password}@postgres:5432/notification_db?sslmode=disable", DATABASE_OWNER_ROLE: notification_db_owner}
     depends_on: {postgres: {condition: service_healthy}}
     networks: [private]
   tenant-service:
+    image: ${IMAGE_REGISTRY:-barber-appointment}/tenant-service:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: services/tenant-service/Dockerfile}
     environment:
       DATABASE_URL: postgresql://tenant_db_app:${TENANT_DB_APP_PASSWORD:-tenant-app-dev-password}@postgres:5432/tenant_db?sslmode=disable
@@ -161,6 +162,7 @@ services:
     healthcheck: *app-healthcheck
     networks: [private]
   gateway-service:
+    image: ${IMAGE_REGISTRY:-barber-appointment}/gateway-service:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: services/gateway-service/Dockerfile}
     environment:
       TENANT_SERVICE_URL: http://tenant-service:8080
@@ -185,6 +187,7 @@ services:
     healthcheck: *app-healthcheck
     networks: [public, private]
   admin-web:
+    image: ${IMAGE_REGISTRY:-barber-appointment}/admin-web:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: apps/admin-web/Dockerfile}
     environment:
       GATEWAY_URL: http://gateway-service:8080
@@ -197,6 +200,7 @@ services:
       retries: 20
     networks: [public, private]
   booking-web:
+    image: ${IMAGE_REGISTRY:-barber-appointment}/booking-web:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: apps/booking-web/Dockerfile}
     environment:
       GATEWAY_URL: http://gateway-service:8080
@@ -208,7 +212,35 @@ services:
       timeout: 3s
       retries: 20
     networks: [public, private]
+  platform-admin-web:
+    image: ${IMAGE_REGISTRY:-barber-appointment}/platform-admin-web:${RELEASE_TAG:-dev}
+    build: {context: ., dockerfile: apps/platform-admin-web/Dockerfile}
+    environment:
+      GATEWAY_URL: http://gateway-service:8080
+      PLATFORM_ADMIN_TOKEN: ${PLATFORM_ADMIN_TOKEN:-replace-with-a-separate-platform-development-secret}
+      PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-platform@example.com}
+      PLATFORM_ADMIN_PASSWORD_SCRYPT: ${PLATFORM_ADMIN_PASSWORD_SCRYPT:-00112233445566778899aabbccddeeff:506bc477a50e27e87ccf36b3e0185e962c9ced01bf7f58e58dc8049702234576}
+      PLATFORM_SESSION_SECRET: ${PLATFORM_SESSION_SECRET:-replace-with-a-platform-session-secret-at-least-32-chars}
+      PLATFORM_COOKIE_SECURE: "false"
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis-dev-password}@redis:6379/0
+    depends_on: {gateway-service: {condition: service_healthy}, redis: {condition: service_healthy}}
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [public, private]
+  caddy:
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    depends_on:
+      gateway-service: {condition: service_healthy}
+      platform-admin-web: {condition: service_healthy}
+    ports: ["80:80"]
+    volumes:
+      - ./infrastructure/caddy/Caddyfile.local:/etc/caddy/Caddyfile:ro
+    networks: [public, private]
   auth-service:
+    image: ${IMAGE_REGISTRY:-barber-appointment}/auth-service:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: services/auth-service/Dockerfile}
     environment:
       DATABASE_URL: "postgresql://auth_db_app:${AUTH_DB_APP_PASSWORD:-auth-app-dev-password}@postgres:5432/auth_db?sslmode=disable"
@@ -322,6 +354,7 @@ services:
     depends_on: {redis: {condition: service_healthy}, nats: {condition: service_healthy}}
     networks: [private]
   barber-service:
+    image: ${IMAGE_REGISTRY:-barber-appointment}/barber-service:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: services/barber-service/Dockerfile}
     environment:
       DATABASE_URL: "postgresql://barber_db_app:${BARBER_DB_APP_PASSWORD:-barber-app-dev-password}@postgres:5432/barber_db?sslmode=disable"
@@ -331,6 +364,7 @@ services:
     healthcheck: *app-healthcheck
     networks: [private]
   catalog-service:
+    image: ${IMAGE_REGISTRY:-barber-appointment}/catalog-service:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: services/catalog-service/Dockerfile}
     environment:
       DATABASE_URL: "postgresql://catalog_db_app:${CATALOG_DB_APP_PASSWORD:-catalog-app-dev-password}@postgres:5432/catalog_db?sslmode=disable"
@@ -341,6 +375,7 @@ services:
     healthcheck: *app-healthcheck
     networks: [private]
   scheduling-service:
+    image: ${IMAGE_REGISTRY:-barber-appointment}/scheduling-service:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: services/scheduling-service/Dockerfile}
     environment:
       DATABASE_URL: "postgresql://scheduling_db_app:${SCHEDULING_DB_APP_PASSWORD:-scheduling-app-dev-password}@postgres:5432/scheduling_db?sslmode=disable"
@@ -355,6 +390,7 @@ services:
     healthcheck: *app-healthcheck
     networks: [private]
   appointment-service:
+    image: ${IMAGE_REGISTRY:-barber-appointment}/appointment-service:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: services/appointment-service/Dockerfile}
     environment:
       DATABASE_URL: "postgresql://appointment_db_app:${APPOINTMENT_DB_APP_PASSWORD:-appointment-app-dev-password}@postgres:5432/appointment_db?sslmode=disable"
@@ -370,6 +406,7 @@ services:
     healthcheck: *app-healthcheck
     networks: [private]
   customer-service:
+    image: ${IMAGE_REGISTRY:-barber-appointment}/customer-service:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: services/customer-service/Dockerfile}
     environment:
       DATABASE_URL: "postgresql://customer_db_app:${CUSTOMER_DB_APP_PASSWORD:-customer-app-dev-password}@postgres:5432/customer_db?sslmode=disable"
@@ -383,6 +420,7 @@ services:
     healthcheck: *app-healthcheck
     networks: [private]
   notification-service:
+    image: ${IMAGE_REGISTRY:-barber-appointment}/notification-service:${RELEASE_TAG:-dev}
     build: {context: ., dockerfile: services/notification-service/Dockerfile}
     environment:
       DATABASE_URL: "postgresql://notification_db_app:${NOTIFICATION_DB_APP_PASSWORD:-notification-app-dev-password}@postgres:5432/notification_db?sslmode=disable"

@@ -21,9 +21,9 @@ describe("admin login accessibility", () => {
     mocks.post.mockRejectedValue(new Error("unavailable"));
     const user = userEvent.setup();
     render(<LoginPage />);
-    await user.type(screen.getByRole("textbox", { name: "Email" }), "owner@example.test");
-    await user.type(screen.getByLabelText("Password"), "long-enough-value");
-    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await user.type(screen.getByRole("textbox", { name: "E-posta" }), "owner@example.test");
+    await user.type(screen.getByLabelText("Parola"), "long-enough-value");
+    await user.click(screen.getByRole("button", { name: "Giriş yap" }));
     expect(await screen.findByRole("alert")).toBeTruthy();
   });
 
@@ -31,9 +31,9 @@ describe("admin login accessibility", () => {
     mocks.post.mockResolvedValue({ must_change_password: false });
     const user = userEvent.setup();
     render(<LoginPage />);
-    await user.type(screen.getByRole("textbox", { name: "Email" }), "OWNER@EXAMPLE.TEST");
-    await user.type(screen.getByLabelText("Password"), "long-enough-value");
-    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await user.type(screen.getByRole("textbox", { name: "E-posta" }), "OWNER@EXAMPLE.TEST");
+    await user.type(screen.getByLabelText("Parola"), "long-enough-value");
+    await user.click(screen.getByRole("button", { name: "Giriş yap" }));
 
     expect(mocks.post).toHaveBeenCalledWith("/v1/admin/auth/login", {
       email: "owner@example.test",
@@ -46,9 +46,9 @@ describe("admin login accessibility", () => {
   it("relies on email input validation before authentication submission", async () => {
     const user = userEvent.setup();
     render(<LoginPage />);
-    await user.type(screen.getByRole("textbox", { name: "Email" }), "not-an-email");
-    await user.type(screen.getByLabelText("Password"), "long-enough-value");
-    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await user.type(screen.getByRole("textbox", { name: "E-posta" }), "not-an-email");
+    await user.type(screen.getByLabelText("Parola"), "long-enough-value");
+    await user.click(screen.getByRole("button", { name: "Giriş yap" }));
     expect(mocks.post).not.toHaveBeenCalled();
   });
 });

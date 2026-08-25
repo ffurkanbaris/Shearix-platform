@@ -1,9 +1,22 @@
+# Ignore runtime environment variants at any depth while retaining reviewed
+# key inventories. Next.js commonly writes .env.local/.env.production.
 .env
+.env.*
+!.env.example
+!**/.env.example
 .idea/
 .vscode/
 coverage.out
 bin/
+services/*/api
+
+# Root-owned production material and generated immutable release manifests.
+infrastructure/production/*.env
+infrastructure/production/*.images.yml
 node_modules/
 .next/
 *.tsbuildinfo
+test-results/
+playwright-report/
+google-cloud-cli-*.tar.gz
 *:Zone.Identifier

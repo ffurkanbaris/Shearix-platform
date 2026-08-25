@@ -22,6 +22,14 @@ if [ "$action" = coverage ]; then
   mkdir -p "$repo/coverage"
 fi
 
+if [ "$action" = tidy-check ]; then
+  tidy_snapshot=$(mktemp)
+  trap 'rm -f "$tidy_snapshot"' EXIT
+  while IFS= read -r module; do
+    sha256sum "$repo/$module/go.mod" "$repo/$module/go.sum" >>"$tidy_snapshot"
+  done < "$manifest"
+fi
+
 while IFS= read -r module; do
   [ -n "$module" ] || continue
   echo "==> $action: $module"
@@ -41,9 +49,8 @@ while IFS= read -r module; do
 done < "$manifest"
 
 if [ "$action" = tidy-check ]; then
-  if ! command -v git >/dev/null 2>&1 || ! git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "git worktree unavailable; dependency-file cleanliness check cannot run" >&2
+  if ! sha256sum --quiet -c "$tidy_snapshot"; then
+    echo "go mod tidy changed dependency files; run it and commit the result" >&2
     exit 1
   fi
-  git -C "$repo" diff --exit-code -- '**/go.mod' '**/go.sum'
 fi

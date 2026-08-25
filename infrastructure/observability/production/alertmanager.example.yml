@@ -1,0 +1,13 @@
+# Copy outside the repository, insert the real receiver URL, chmod 600, and
+# point ALERTMANAGER_CONFIG_FILE at the copy.
+route:
+  receiver: operator
+  group_by: [alertname, service]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+receivers:
+  - name: operator
+    webhook_configs:
+      - url: https://replace-with-real-alert-receiver.invalid/alerts
+        send_resolved: true

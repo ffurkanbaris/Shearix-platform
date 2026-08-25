@@ -39,6 +39,14 @@ func TestCatalogFoundationIntegration(t *testing.T) {
 		_, _ = owner.Exec(ctx, `DELETE FROM public.services WHERE tenant_id=$1`, tenantA)
 	}()
 	repo := repository.New(pool)
+	emptyServices, err := repo.Services(ctx, tenantA, true)
+	if err != nil || emptyServices == nil || len(emptyServices) != 0 {
+		t.Fatalf("empty services must be []: %#v %v", emptyServices, err)
+	}
+	emptyAssignments, err := repo.Assignments(ctx, tenantA, uuid.New())
+	if err != nil || emptyAssignments == nil || len(emptyAssignments) != 0 {
+		t.Fatalf("empty assignments must be []: %#v %v", emptyAssignments, err)
+	}
 	input := domain.ServiceInput{Name: "Cut", DurationMinutes: 30, BufferBeforeMinutes: 5, Price: "25.50", Currency: "TRY"}
 	service, err := repo.Save(ctx, tenantA, uuid.Nil, input)
 	if err != nil {

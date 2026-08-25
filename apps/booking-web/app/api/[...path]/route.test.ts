@@ -8,11 +8,12 @@ describe("booking Next.js proxy route wiring", () => {
 
   it("wires GET query and cookies through the actual route", async () => {
     const upstream = vi.fn().mockResolvedValue(new Response("ok", { status: 200, headers: { "content-type": "text/plain" } }));
-    const response = await proxyGateway(new Request("http://booking.localhost/api/v1/public/config?lang=tr", { headers: { cookie: "session=opaque", "x-tenant-id": "spoof", "x-app-type": "admin", "x-internal-token": "spoof" } }) as NextRequest, ["v1", "public", "config"], upstream);
+    const response = await proxyGateway(new Request("http://booking.localhost/api/v1/public/config?lang=tr", { headers: { host: "booking.localhost", cookie: "session=opaque", "x-tenant-id": "spoof", "x-app-type": "admin", "x-internal-token": "spoof" } }) as NextRequest, ["v1", "public", "config"], upstream);
     expect(response.status).toBe(200);
     const [url, init] = upstream.mock.calls[0] as [URL, RequestInit];
     expect(url.toString()).toBe("http://gateway-service:8080/api/v1/public/config?lang=tr");
     const headers = init.headers as Headers;
+    expect(headers.get("host")).toBe("booking.localhost");
     expect(headers.get("cookie")).toBe("session=opaque");
     expect(headers.get("x-tenant-id")).toBeNull();
     expect(headers.get("x-app-type")).toBeNull();

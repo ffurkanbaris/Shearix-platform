@@ -1,0 +1,22 @@
+{
+	auto_https off
+}
+
+# The operator control plane has its own hostname and never enters tenant
+# resolution. Keep this route before the tenant-domain catch-all.
+http://platform.localhost {
+	reverse_proxy platform-admin-web:3000 {
+		header_up X-Platform-Client-IP {http.request.remote.host}
+	}
+}
+
+# Local tenant domains (for example admin.localhost and booking.localhost)
+# continue through gateway-service so Host-based tenant resolution is exercised.
+http:// {
+	reverse_proxy gateway-service:8080 {
+		header_up Host {http.request.host}
+		header_up -X-Internal-Token
+		header_up -X-Tenant-ID
+		header_up -X-App-Type
+	}
+}

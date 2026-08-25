@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Barber production backup hourly
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=10m
+Persistent=true
+Unit=barber-production-backup.service
+
+[Install]
+WantedBy=timers.target

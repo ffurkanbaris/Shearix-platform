@@ -1,0 +1,16 @@
+[Unit]
+Description=Barber production encrypted off-host backup
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/barber-appointment
+EnvironmentFile=/etc/barber-appointment/production.env
+ExecStart=/opt/barber-appointment/scripts/backup/backup-production.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+PrivateTmp=true
+NoNewPrivileges=true

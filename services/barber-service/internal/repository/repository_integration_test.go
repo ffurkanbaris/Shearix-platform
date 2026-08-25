@@ -40,6 +40,14 @@ func TestBarberFoundationIntegration(t *testing.T) {
 		_, _ = owner.Exec(ctx, `DELETE FROM public.branches WHERE tenant_id=$1`, tenantA)
 	}()
 	repo := repository.New(pool)
+	emptyBranches, err := repo.Branches(ctx, tenantA, true)
+	if err != nil || emptyBranches == nil || len(emptyBranches) != 0 {
+		t.Fatalf("empty branches must be []: %#v %v", emptyBranches, err)
+	}
+	emptyBarbers, err := repo.Barbers(ctx, tenantA, true)
+	if err != nil || emptyBarbers == nil || len(emptyBarbers) != 0 {
+		t.Fatalf("empty barbers must be []: %#v %v", emptyBarbers, err)
+	}
 	branch, err := repo.SaveBranch(ctx, tenantA, uuid.Nil, domain.BranchInput{Name: "Central", Address: "Main"})
 	if err != nil {
 		t.Fatal(err)

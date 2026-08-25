@@ -27,6 +27,7 @@ export default function SettingsPage() {
   const [passwords, setPasswords] = useState({ current_password: "", new_password: "" });
   const [passwordError, setPasswordError] = useState("");
   const [passwordSaved, setPasswordSaved] = useState(false);
+  const [passwordSaving, setPasswordSaving] = useState(false);
   const canEdit = canManageTenantSettings(principal.role);
   const dirty = settings !== undefined && JSON.stringify(form) !== JSON.stringify(settingsForm(settings));
 
@@ -59,49 +60,46 @@ export default function SettingsPage() {
       const result = await apiClient.patch<TenantSettings>("/v1/admin/settings", payload);
       setSettings(result); setForm(settingsForm(result)); setSaved(true);
     } catch (cause) {
-      setFormError(cause instanceof Error ? cause.message : "Unable to save settings.");
+      setFormError(cause instanceof Error ? cause.message : "Ayarlar kaydedilemedi.");
     } finally { setSaving(false); }
   }
 
   async function changePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setPasswordError(""); setPasswordSaved(false);
     try {
+      setPasswordSaving(true);
       await apiClient.post<void>("/v1/admin/auth/change-password", passwords);
       setPasswords({ current_password: "", new_password: "" }); setPasswordSaved(true);
     } catch (cause) {
-      setPasswordError(cause instanceof ApiError ? cause.message : "Unable to change the password.");
-    }
+      setPasswordError(cause instanceof ApiError ? cause.message : "Parola değiştirilemedi.");
+    } finally { setPasswordSaving(false); }
   }
 
-  if (error) return <><PageHeader title="Settings" /><ErrorNotice error={error} /></>;
-  if (!settings) return <><PageHeader title="Settings" description="Tenant operational configuration and account security." /><LoadingState /></>;
+  if (error) return <><PageHeader title="Ayarlar" /><ErrorNotice error={error} onRetry={() => window.location.reload()} /></>;
+  if (!settings) return <><PageHeader title="Ayarlar" description="İşletme ayarları ve hesap güvenliği." /><LoadingState /></>;
 
   return (
     <>
       {dirty && canEdit && (
         <div className="unsaved-banner">
-          <span>You have unsaved changes.</span>
-          <button className="button ghost sm" onClick={() => { setForm(settingsForm(settings)); setFormError(""); }} type="button">Discard</button>
+          <span>Kaydedilmemiş değişiklikleriniz var.</span>
+          <button className="button ghost sm" onClick={() => { setForm(settingsForm(settings)); setFormError(""); }} type="button">Vazgeç</button>
         </div>
       )}
 
-      <PageHeader title="Settings" description="These settings belong to the tenant resolved from this admin domain." />
+      <PageHeader title="Ayarlar" description="Bu ayarlar yönetim alan adından belirlenen işletmeye aittir." />
 
       <div className="settings-layout">
-        <aside className="settings-nav" aria-label="Settings sections">
-          <span>General</span>
-          <span>Booking</span>
-          <span>Scheduling</span>
-          <span>Reminders</span>
-          <span>Cancellation</span>
+        <aside className="settings-nav" aria-label="Ayar bölümleri">
+          <span>Genel</span><span>Randevu</span><span>Planlama</span><span>Hatırlatmalar</span><span>İptal</span>
         </aside>
         <div>
           {/* Operational settings */}
           <form className="panel" onSubmit={saveSettings}>
           <div className="panel-header" style={{ marginBottom: "1.5rem" }}>
             <div className="panel-header-text">
-              <h2>Booking &amp; scheduling</h2>
-              <p className="muted">Changes affect newly calculated availability immediately.</p>
+              <h2>Randevu ve planlama</h2>
+              <p className="muted">Değişiklikler yeni hesaplanan uygunlukları hemen etkiler.</p>
             </div>
           </div>
 
@@ -109,18 +107,18 @@ export default function SettingsPage() {
             <div className="form-stack">
 
               <div style={{ borderBottom: "1px solid var(--line-2)", paddingBottom: "1.25rem", marginBottom: ".25rem" }}>
-                <p style={{ fontSize: ".6875rem", fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".07em", marginBottom: ".875rem" }}>General</p>
+                <p style={{ fontSize: ".6875rem", fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".07em", marginBottom: ".875rem" }}>Genel</p>
                 <div className="form-grid">
                   <label style={{ gridColumn: "1 / -1" }}>
                     Timezone
                     <input value={form.timezone} onChange={(e) => update("timezone", e.target.value)} disabled={!canEdit || saving} required placeholder="Europe/Istanbul" />
                   </label>
                   <label>
-                    Booking interval (minutes)
+                    Appointment interval (minutes)
                     <input type="number" min="1" max="120" value={form.booking_interval_minutes} onChange={(e) => update("booking_interval_minutes", e.target.value)} disabled={!canEdit || saving} required />
                   </label>
                   <label>
-                    Booking horizon (days)
+                    Appointment horizon (days)
                     <input type="number" min="1" max="365" value={form.booking_horizon_days} onChange={(e) => update("booking_horizon_days", e.target.value)} disabled={!canEdit || saving} required />
                   </label>
                   <label>
@@ -131,35 +129,35 @@ export default function SettingsPage() {
               </div>
 
               <div style={{ paddingBottom: ".5rem" }}>
-                <p style={{ fontSize: ".6875rem", fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".07em", marginBottom: ".875rem" }}>Reminders &amp; cancellation</p>
+                <p style={{ fontSize: ".6875rem", fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".07em", marginBottom: ".875rem" }}>Hatırlatmalar ve iptal</p>
                 <div className="form-grid">
                   <label style={{ gridColumn: "1 / -1" }}>
                     Reminder offsets (minutes before)
                     <input value={form.reminder_offsets_minutes} onChange={(e) => update("reminder_offsets_minutes", e.target.value)} disabled={!canEdit || saving} required aria-describedby="reminder-help" />
-                    <span id="reminder-help" className="field-help">Positive unique values separated by commas, e.g. 1440, 120.</span>
+                    <span id="reminder-help" className="field-help">Virgülle ayrılmış, birbirinden farklı pozitif değerler girin; ör. 1440, 120.</span>
                   </label>
                   <label style={{ gridColumn: "1 / -1" }}>
                     Cancellation policy
                     <select value={form.cancellation_policy} onChange={(e) => update("cancellation_policy", e.target.value as TenantSettings["cancellation_policy"])} disabled={!canEdit || saving}>
-                      <option value="allow_until_notice">Allow until notice period</option>
-                      <option value="no_cancellation">No customer cancellation</option>
+                      <option value="allow_until_notice">Bildirim süresine kadar izin ver</option>
+                      <option value="no_cancellation">Müşteri iptaline izin verme</option>
                     </select>
                   </label>
                   <div className="setting-detail" style={{ gridColumn: "1 / -1" }}>
-                    <span>Cancellation notice</span>
+                    <span>İptal bildirim süresi</span>
                     <strong>{settings.cancellation_notice_minutes} minutes</strong>
-                    <small style={{ color: "var(--muted)", fontSize: ".75rem" }}>Managed by platform configuration.</small>
+                    <small style={{ color: "var(--muted)", fontSize: ".75rem" }}>Platform yapılandırmasından yönetilir.</small>
                   </div>
                 </div>
               </div>
 
               <FormError value={formError} />
-              {saved && <p className="success-notice">Settings saved. New availability and reminder planning use these values.</p>}
+              {saved && <p className="success-notice">Ayarlar kaydedildi. Yeni uygunluk ve hatırlatma planları bu değerleri kullanacak.</p>}
 
               {canEdit ? (
                 <div className="button-row">
-                  <button className="button primary" disabled={saving || !dirty}>{saving ? "Saving…" : "Save settings"}</button>
-                  <button type="button" className="button secondary" disabled={saving || !dirty} onClick={() => { setForm(settingsForm(settings)); setFormError(""); }}>Discard changes</button>
+                  <button className="button primary" disabled={saving || !dirty}>{saving ? "Kaydediliyor…" : "Ayarları kaydet"}</button>
+                  <button type="button" className="button secondary" disabled={saving || !dirty} onClick={() => { setForm(settingsForm(settings)); setFormError(""); }}>Değişikliklerden vazgeç</button>
                 </div>
               ) : (
                 <p className="notice muted">Your {principal.role.toLowerCase()} role can view these settings but cannot edit them.</p>
@@ -174,16 +172,16 @@ export default function SettingsPage() {
             <form className="panel" onSubmit={changePassword}>
             <div className="panel-header">
               <div className="panel-header-text">
-                <h2>Change password</h2>
-                <p className="muted">Replaces your credential and revokes other active sessions.</p>
+                <h2>Parolayı değiştir</h2>
+                <p className="muted">Parolanızı yeniler ve diğer aktif oturumları sonlandırır.</p>
               </div>
             </div>
             <div className="form-stack">
-              <label>Current password<input type="password" autoComplete="current-password" value={passwords.current_password} onChange={(e) => setPasswords({ ...passwords, current_password: e.target.value })} required /></label>
-              <label>New password<input type="password" autoComplete="new-password" value={passwords.new_password} onChange={(e) => setPasswords({ ...passwords, new_password: e.target.value })} minLength={10} required /></label>
+              <label>Mevcut parola<input type="password" autoComplete="current-password" value={passwords.current_password} onChange={(e) => setPasswords({ ...passwords, current_password: e.target.value })} required disabled={passwordSaving} /></label>
+              <label>Yeni parola<input type="password" autoComplete="new-password" value={passwords.new_password} onChange={(e) => setPasswords({ ...passwords, new_password: e.target.value })} minLength={10} required disabled={passwordSaving} /></label>
               <FormError value={passwordError} />
-              {passwordSaved && <p className="success-notice">Password updated.</p>}
-              <button className="button primary">Change password</button>
+              {passwordSaved && <p className="success-notice">Parola güncellendi.</p>}
+              <button className="button primary" disabled={passwordSaving}>{passwordSaving ? "Parola değiştiriliyor…" : "Parolayı değiştir"}</button>
             </div>
             </form>
 
@@ -191,27 +189,27 @@ export default function SettingsPage() {
               {/* Domains */}
               <section className="panel">
             <div className="panel-header">
-              <div className="panel-header-text"><h2>Domains</h2></div>
+              <div className="panel-header-text"><h2>Alan adları</h2></div>
             </div>
-            <p className="muted">Custom domain registration, verification, and activation are platform-control-plane operations. Contact the platform administrator to manage admin or booking domains.</p>
+            <p className="muted">Özel alan adı kaydı, doğrulaması ve etkinleştirmesi platform yöneticisi tarafından yapılır.</p>
               </section>
 
               {/* Account */}
               <section className="panel">
             <div className="panel-header">
-              <div className="panel-header-text"><h2>Your account</h2></div>
+              <div className="panel-header-text"><h2>Hesabınız</h2></div>
             </div>
             <dl style={{ display: "grid", gap: ".5rem", margin: 0 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".875rem", paddingBottom: ".5rem", borderBottom: "1px solid var(--line-2)" }}>
-                <dt style={{ color: "var(--muted)" }}>Name</dt>
+                <dt style={{ color: "var(--muted)" }}>Ad</dt>
                 <dd style={{ margin: 0, fontWeight: 500 }}>{principal.name}</dd>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".875rem", paddingBottom: ".5rem", borderBottom: "1px solid var(--line-2)" }}>
-				<dt style={{ color: "var(--muted)" }}>Email</dt>
+				<dt style={{ color: "var(--muted)" }}>E-posta</dt>
 				<dd style={{ margin: 0, fontWeight: 500 }}>{principal.email}</dd>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".875rem" }}>
-                <dt style={{ color: "var(--muted)" }}>Role</dt>
+                <dt style={{ color: "var(--muted)" }}>Rol</dt>
                 <dd style={{ margin: 0, fontWeight: 500 }}>{principal.role}</dd>
               </div>
             </dl>

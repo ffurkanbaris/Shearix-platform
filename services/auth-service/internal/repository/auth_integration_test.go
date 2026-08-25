@@ -2,7 +2,9 @@ package repository_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -12,11 +14,101 @@ import (
 	"github.com/barber-appointment/auth-service/internal/repository"
 	"github.com/barber-appointment/auth-service/internal/service"
 	"github.com/barber-appointment/platform/db"
+	platformemail "github.com/barber-appointment/platform/email"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
+
+type captureEmailSender struct{ message platformemail.Message }
+
+func (s *captureEmailSender) Send(_ context.Context, message platformemail.Message) (platformemail.Result, error) {
+	s.message = message
+	return platformemail.Result{ProviderMessageID: "integration-message"}, nil
+}
+
+func TestEmailOnlyRegistrationIntegration(t *testing.T) {
+	appDSN, ownerDSN := os.Getenv("AUTH_TEST_DATABASE_URL"), os.Getenv("AUTH_TEST_OWNER_DATABASE_URL")
+	if appDSN == "" || ownerDSN == "" {
+		t.Skip("AUTH_TEST_DATABASE_URL and AUTH_TEST_OWNER_DATABASE_URL are required")
+	}
+	ctx := context.Background()
+	appPool, err := pgxpool.New(ctx, appDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer appPool.Close()
+	owner, err := pgx.Connect(ctx, ownerDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close(ctx)
+	if _, err = owner.Exec(ctx, "SET ROLE auth_db_owner"); err != nil {
+		t.Fatal(err)
+	}
+
+	tenantID := uuid.New()
+	email := "email-only-" + uuid.NewString() + "@example.test"
+	sender := &captureEmailSender{}
+	auth := service.New(repository.New(appPool), time.Hour, sender)
+	registration, err := auth.Register(ctx, tenantID, domain.Principal{TenantID: tenantID, Role: domain.RoleOwner}, domain.RegisterInput{Name: "Email Only User", Email: email, Role: domain.RoleBarber})
+	if err != nil {
+		t.Fatalf("email registration: %v", err)
+	}
+	defer owner.Exec(ctx, `DELETE FROM public.identities WHERE id=$1`, registration.IdentityID)
+	if !registration.MembershipCreated || !registration.CredentialScheduled || registration.Role != domain.RoleBarber {
+		t.Fatalf("registration result=%+v", registration)
+	}
+	if sender.message.To != email || sender.message.Template != "user_initial_password" {
+		t.Fatalf("email delivery metadata=%+v", sender.message)
+	}
+	const prefix, suffix = "Your initial password is: ", "\nYou must change it after signing in."
+	if !strings.HasPrefix(sender.message.Text, prefix) || !strings.HasSuffix(sender.message.Text, suffix) {
+		t.Fatalf("unexpected initial credential message format")
+	}
+	temporaryPassword := strings.TrimSuffix(strings.TrimPrefix(sender.message.Text, prefix), suffix)
+	if len(temporaryPassword) < 20 {
+		t.Fatal("temporary credential lacks expected entropy")
+	}
+	publicResult, err := json.Marshal(registration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(publicResult), temporaryPassword) || strings.Contains(strings.ToLower(string(publicResult)), "password") {
+		t.Fatalf("registration contract exposed credential material: %s", publicResult)
+	}
+
+	var passwordHash, deliveryStatus string
+	var mustChange bool
+	if err = owner.QueryRow(ctx, `SELECT password_hash,must_change_password,initial_delivery_status FROM public.credentials WHERE identity_id=$1`, registration.IdentityID).Scan(&passwordHash, &mustChange, &deliveryStatus); err != nil {
+		t.Fatal(err)
+	}
+	if passwordHash == temporaryPassword || strings.Contains(passwordHash, temporaryPassword) {
+		t.Fatal("temporary credential was persisted as plaintext")
+	}
+	if err = bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(temporaryPassword)); err != nil {
+		t.Fatalf("stored hash does not authenticate delivered credential: %v", err)
+	}
+	if !mustChange || deliveryStatus != "sent" {
+		t.Fatalf("must_change_password=%v delivery_status=%q", mustChange, deliveryStatus)
+	}
+
+	var plaintextPersisted bool
+	if err = owner.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM public.identities WHERE id=$1 AND (name LIKE '%'||$2||'%' OR email LIKE '%'||$2||'%')) OR EXISTS(SELECT 1 FROM public.credentials WHERE identity_id=$1 AND (password_hash LIKE '%'||$2||'%' OR COALESCE(initial_delivery_last_error,'') LIKE '%'||$2||'%'))`, registration.IdentityID, temporaryPassword).Scan(&plaintextPersisted); err != nil {
+		t.Fatal(err)
+	}
+	if plaintextPersisted {
+		t.Fatal("temporary credential leaked into persisted identity or credential fields")
+	}
+	var obsoleteOutboxPresent bool
+	if err = owner.QueryRow(ctx, `SELECT to_regclass('public.credential_delivery_outbox') IS NOT NULL`).Scan(&obsoleteOutboxPresent); err != nil {
+		t.Fatal(err)
+	}
+	if obsoleteOutboxPresent {
+		t.Fatal("obsolete credential_delivery_outbox still exists")
+	}
+}
 
 func TestAuthenticationIntegration(t *testing.T) {
 	appDSN, ownerDSN := os.Getenv("AUTH_TEST_DATABASE_URL"), os.Getenv("AUTH_TEST_OWNER_DATABASE_URL")

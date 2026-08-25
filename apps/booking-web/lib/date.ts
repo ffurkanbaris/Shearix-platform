@@ -10,10 +10,10 @@ export function addCalendarDays(date: string, days: number): string {
 }
 
 export function displaySlot(value: string, timezone: string): string {
-  return new Intl.DateTimeFormat(undefined, { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: timezone }).format(new Date(value));
+  return new Intl.DateTimeFormat("tr-TR", { weekday: "short", hour: "2-digit", minute: "2-digit", timeZone: timezone }).format(new Date(value));
 }
 
 export function displayDate(value: string, timezone: string): string {
   const [year, month, day] = value.split("-").map(Number);
-  return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: timezone }).format(new Date(Date.UTC(year, month - 1, day, 12)));
+  return new Intl.DateTimeFormat("tr-TR", { weekday: "short", month: "short", day: "numeric", timeZone: timezone }).format(new Date(Date.UTC(year, month - 1, day, 12)));
 }

@@ -27,7 +27,7 @@ func (r Repository) Assigned(ctx context.Context, t, branchID, barberID uuid.UUI
 	})
 }
 func (r Repository) Branches(ctx context.Context, t uuid.UUID, activeOnly bool) ([]domain.Branch, error) {
-	var out []domain.Branch
+	out := make([]domain.Branch, 0)
 	err := db.WithTenantTx(ctx, r.pool, t, func(tx pgx.Tx) error {
 		if !activeOnly {
 			rows, e := generated.New(tx).ListBranches(ctx, pgtype.UUID{Bytes: [16]byte(t), Valid: true})
@@ -89,7 +89,7 @@ func (r Repository) SaveBranch(ctx context.Context, t, id uuid.UUID, in domain.B
 	return v, e
 }
 func (r Repository) Barbers(ctx context.Context, t uuid.UUID, public bool) ([]domain.Barber, error) {
-	var out []domain.Barber
+	out := make([]domain.Barber, 0)
 	e := db.WithTenantTx(ctx, r.pool, t, func(tx pgx.Tx) error {
 		q := `SELECT b.id,b.display_name,p.bio,b.active,b.identity_id FROM public.barbers b JOIN public.barber_profiles p ON p.barber_id=b.id AND p.tenant_id=b.tenant_id WHERE b.tenant_id=$1`
 		if public {

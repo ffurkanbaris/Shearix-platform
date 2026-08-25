@@ -38,6 +38,7 @@ type authService interface {
 	ForgotPassword(context.Context, uuid.UUID, domain.ForgotPasswordInput) error
 	Current(context.Context, uuid.UUID, string) (domain.Principal, error)
 	Logout(context.Context, uuid.UUID, string) error
+	Owners(context.Context, uuid.UUID) ([]domain.OwnerState, error)
 }
 
 type Handler struct {
@@ -79,6 +80,22 @@ func (h Handler) Register(app *fiber.App) {
 	app.Get("/internal/v1/auth/members/:id/barber-eligibility", h.barberEligibility)
 	app.Post("/internal/v1/auth/change-password", h.Authenticate(), h.changePassword)
 	app.Post("/internal/v1/auth/forgot-password", h.forgotPassword)
+	app.Get("/internal/v1/platform/tenants/:id/owners", h.platformOwners)
+}
+
+func (h Handler) platformOwners(c fiber.Ctx) error {
+	if h.auth.Verify(c.Get(internalauth.HeaderName)) != nil {
+		return c.SendStatus(fiber.StatusUnauthorized)
+	}
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.SendStatus(fiber.StatusBadRequest)
+	}
+	result, err := h.service.Owners(c.Context(), id)
+	if err != nil {
+		return c.SendStatus(fiber.StatusInternalServerError)
+	}
+	return c.JSON(result)
 }
 
 func (h Handler) trustedContext(c fiber.Ctx) (tenantctx.Context, error) {

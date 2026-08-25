@@ -70,46 +70,46 @@ export default function BarbersPage() {
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setCreateError(""); setSaving(true);
     try { await apiClient.post("/v1/admin/barbers", createForm); closeCreate(); await load(); }
-    catch (cause) { setCreateError(cause instanceof ApiError ? cause.message : "Unable to create the barber."); }
+    catch (cause) { setCreateError(cause instanceof ApiError ? cause.message : "Berber oluşturulamadı."); }
     finally { setSaving(false); }
   }
 
   async function saveEdit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!editing) return; setEditError(""); setSaving(true);
     try { await apiClient.patch(`/v1/admin/barbers/${editing.id}`, editForm); closeEdit(); await load(); }
-    catch (cause) { setEditError(cause instanceof ApiError ? cause.message : "Unable to update the barber."); }
+    catch (cause) { setEditError(cause instanceof ApiError ? cause.message : "Berber güncellenemedi."); }
     finally { setSaving(false); }
   }
 
   async function changeStatus() {
     if (!statusTarget) return; setSaving(true);
     try { await apiClient.patch(`/v1/admin/barbers/${statusTarget.id}`, { ...formFor(statusTarget), active: !statusTarget.active }); setStatusTarget(undefined); await load(); }
-    catch (cause) { setActionError(cause instanceof ApiError ? cause.message : "Unable to update barber status."); setStatusTarget(undefined); }
+    catch (cause) { setActionError(cause instanceof ApiError ? cause.message : "Berber durumu güncellenemedi."); setStatusTarget(undefined); }
     finally { setSaving(false); }
   }
 
   async function link(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!linking || !identityID) return; setActionError(""); setSaving(true);
     try { await apiClient.post(`/v1/admin/barbers/${linking.id}/link-identity`, { identity_id: identityID }); closeLink(); await load(); }
-    catch (cause) { setActionError(cause instanceof ApiError ? cause.message : "Unable to link this identity."); }
+    catch (cause) { setActionError(cause instanceof ApiError ? cause.message : "Panel hesabı bağlanamadı."); }
     finally { setSaving(false); }
   }
 
   async function unlink() {
     if (!unlinkTarget) return; setSaving(true);
     try { await apiClient.delete(`/v1/admin/barbers/${unlinkTarget.id}/link-identity`); setUnlinkTarget(undefined); await load(); }
-    catch (cause) { setActionError(cause instanceof ApiError ? cause.message : "Unable to remove the identity link."); setUnlinkTarget(undefined); }
+    catch (cause) { setActionError(cause instanceof ApiError ? cause.message : "Panel hesabı bağlantısı kaldırılamadı."); setUnlinkTarget(undefined); }
     finally { setSaving(false); }
   }
 
   const BranchFields = ({ form, setForm }: { form: BarberForm; setForm: (f: BarberForm) => void }) => (
     <fieldset>
-      <legend>Branch assignments</legend>
+      <legend>Şube atamaları</legend>
       <div className="check-grid" style={{ marginTop: ".5rem" }}>
         {branches.map((b) => (
           <label className="checkbox" key={b.id}>
             <input type="checkbox" checked={form.branch_ids.includes(b.id)} onChange={() => setForm(toggleBranch(form, b.id))} disabled={!b.active} />
-            {b.name}{!b.active && " (inactive)"}
+            {b.name}{!b.active && " (pasif)"}
           </label>
         ))}
       </div>
@@ -119,9 +119,9 @@ export default function BarbersPage() {
   return (
     <>
       <PageHeader
-        title="Barbers"
-        description="A barber record is separate from a staff identity. Only an eligible BARBER membership may be linked."
-        action={write ? <button className="button primary" onClick={() => setShowCreate(true)}>+ Add barber</button> : undefined}
+        title="Berberler"
+        description="Berber kaydı personel hesabından ayrıdır. Yalnızca uygun bir BERBER üyeliği bağlanabilir."
+        action={write ? <button className="button primary" onClick={() => setShowCreate(true)}>+ Berber ekle</button> : undefined}
       />
 
       {error && <ErrorNotice error={error} onRetry={() => { setError(undefined); void load(); }} />}
@@ -132,10 +132,10 @@ export default function BarbersPage() {
           <table>
             <thead>
               <tr>
-                <th>Barber</th>
-                <th>Branches</th>
-                <th>Panel access</th>
-                <th>Status</th>
+                <th>Berber</th>
+                <th>Şubeler</th>
+                <th>Panel erişimi</th>
+                <th>Durum</th>
                 {(write || canLink) && <th style={{ width: "3rem" }} />}
               </tr>
             </thead>
@@ -143,37 +143,37 @@ export default function BarbersPage() {
               {!barbers ? (
                 <SkeletonRows cols={5} rows={5} />
               ) : barbers.length === 0 ? (
-                <tr><td colSpan={5}><EmptyState title="No barbers" body="Create a barber before assigning services or working hours." /></td></tr>
+                <tr><td colSpan={5}><EmptyState title="Henüz berber yok" body="Hizmet veya çalışma saati atamadan önce bir berber oluşturun." /></td></tr>
               ) : (
                 barbers.map((barber) => {
                   const branchCount = barber.branch_ids?.length ?? 0;
                   const menuItems = [
-                    ...(write ? [{ label: "Edit", onClick: () => openEdit(barber) }] : []),
-                    ...(write ? [{ label: barber.active ? "Deactivate" : "Activate", onClick: () => setStatusTarget(barber), variant: (barber.active ? "danger" : "default") as "danger" | "default" }] : []),
-                    ...(canLink && barber.identity_id ? [{ label: "Unlink identity", onClick: () => setUnlinkTarget(barber), variant: "danger" as const }] : []),
-                    ...(canLink && !barber.identity_id ? [{ label: "Link identity", onClick: () => { setLinking(barber); setActionError(""); } }] : []),
+                    ...(write ? [{ label: "Düzenle", onClick: () => openEdit(barber) }] : []),
+                    ...(write ? [{ label: barber.active ? "Pasife al" : "Etkinleştir", onClick: () => setStatusTarget(barber), variant: (barber.active ? "danger" : "default") as "danger" | "default" }] : []),
+                    ...(canLink && barber.identity_id ? [{ label: "Hesap bağlantısını kaldır", onClick: () => setUnlinkTarget(barber), variant: "danger" as const }] : []),
+                    ...(canLink && !barber.identity_id ? [{ label: "Panel hesabını bağla", onClick: () => { setLinking(barber); setActionError(""); } }] : []),
                   ];
                   return (
                     <tr key={barber.id}>
                     <td>
                       <div className="roster-person">
                         <span className="roster-initial" aria-hidden="true">{barber.display_name.slice(0, 1).toUpperCase()}</span>
-                        <div><strong>{barber.display_name}</strong><span className="sub">{barber.bio || "Barber profile"}</span></div>
+                        <div><strong>{barber.display_name}</strong><span className="sub">{barber.bio || "Berber profili"}</span></div>
                       </div>
                     </td>
                       <td>
-                        <span className="muted">{branchCount === 0 ? "None" : `${branchCount} branch${branchCount === 1 ? "" : "es"}`}</span>
+                        <span className="muted">{branchCount === 0 ? "Yok" : `${branchCount} şube`}</span>
                       </td>
                       <td>
                         {barber.identity_id ? (
                           <span className="indicator">
                             <span className="indicator-dot green" />
-                            Linked
+                            Bağlı
                           </span>
                         ) : (
                           <span className="indicator">
                             <span className="indicator-dot gray" />
-                            <span className="muted">No access</span>
+                            <span className="muted">Erişim yok</span>
                           </span>
                         )}
                       </td>
@@ -191,20 +191,20 @@ export default function BarbersPage() {
       {/* Create drawer */}
       {showCreate && (
         <Drawer
-          title="Add barber"
+          title="Berber ekle"
           onClose={closeCreate}
           footer={
             <>
-              <button className="button secondary" disabled={saving} onClick={closeCreate} type="button">Cancel</button>
+              <button className="button secondary" disabled={saving} onClick={closeCreate} type="button">Vazgeç</button>
               <button className="button primary" disabled={saving} form="barber-create-form" type="submit">
-                {saving ? "Creating…" : "Create barber"}
+                {saving ? "Oluşturuluyor…" : "Berber oluştur"}
               </button>
             </>
           }
         >
           <form id="barber-create-form" onSubmit={create} className="form-stack">
-            <label>Display name<input value={createForm.display_name} onChange={(e) => setCreateForm({ ...createForm, display_name: e.target.value })} required /></label>
-            <label>Bio<textarea value={createForm.bio} onChange={(e) => setCreateForm({ ...createForm, bio: e.target.value })} rows={3} /></label>
+            <label>Görünen ad<input value={createForm.display_name} onChange={(e) => setCreateForm({ ...createForm, display_name: e.target.value })} required /></label>
+            <label>Hakkında<textarea value={createForm.bio} onChange={(e) => setCreateForm({ ...createForm, bio: e.target.value })} rows={3} /></label>
             <BranchFields form={createForm} setForm={setCreateForm} />
             <FormError value={createError} />
           </form>
@@ -214,24 +214,24 @@ export default function BarbersPage() {
       {/* Edit drawer */}
       {editing && (
         <Drawer
-          title={`Edit barber: ${editing.display_name}`}
+          title={`Berberi düzenle: ${editing.display_name}`}
           onClose={closeEdit}
           footer={
             <>
-              <button className="button secondary" disabled={saving} onClick={closeEdit} type="button">Cancel</button>
+              <button className="button secondary" disabled={saving} onClick={closeEdit} type="button">Vazgeç</button>
               <button className="button primary" disabled={saving} form="barber-edit-form" type="submit">
-                {saving ? "Saving…" : "Save changes"}
+                {saving ? "Kaydediliyor…" : "Değişiklikleri kaydet"}
               </button>
             </>
           }
         >
           <form id="barber-edit-form" onSubmit={saveEdit} className="form-stack">
-            <label>Display name<input value={editForm.display_name} onChange={(e) => setEditForm({ ...editForm, display_name: e.target.value })} required /></label>
-            <label>Bio<textarea value={editForm.bio} onChange={(e) => setEditForm({ ...editForm, bio: e.target.value })} rows={3} /></label>
+            <label>Görünen ad<input value={editForm.display_name} onChange={(e) => setEditForm({ ...editForm, display_name: e.target.value })} required /></label>
+            <label>Hakkında<textarea value={editForm.bio} onChange={(e) => setEditForm({ ...editForm, bio: e.target.value })} rows={3} /></label>
             <BranchFields form={editForm} setForm={setEditForm} />
             <label className="checkbox">
               <input type="checkbox" checked={editForm.active} onChange={(e) => setEditForm({ ...editForm, active: e.target.checked })} />
-              Active
+              Etkin
             </label>
             <FormError value={editError} />
           </form>
@@ -240,11 +240,11 @@ export default function BarbersPage() {
 
       {/* Link identity modal */}
       {linking && (
-        <Modal title={`Link panel identity: ${linking.display_name}`} onClose={closeLink}>
+        <Modal title={`Panel hesabını bağla: ${linking.display_name}`} onClose={closeLink}>
           <form className="form-stack" onSubmit={link}>
-            <label>Eligible BARBER member
+            <label>Uygun BERBER üyesi
               <select value={identityID} onChange={(e) => setIdentityID(e.target.value)} required>
-                <option value="">Select a BARBER membership</option>
+                <option value="">BERBER üyeliği seçin</option>
                 {barberMembers.map((m) => (
 				  <option value={m.identity_id} key={m.identity_id}>{m.name} · {m.email}</option>
                 ))}
@@ -252,8 +252,8 @@ export default function BarbersPage() {
             </label>
             <FormError value={actionError} />
             <div className="dialog-actions">
-              <button className="button secondary" disabled={saving} onClick={closeLink} type="button">Cancel</button>
-              <button className="button primary" disabled={saving}>{saving ? "Linking…" : "Link identity"}</button>
+              <button className="button secondary" disabled={saving} onClick={closeLink} type="button">Vazgeç</button>
+              <button className="button primary" disabled={saving}>{saving ? "Bağlanıyor…" : "Panel hesabını bağla"}</button>
             </div>
           </form>
         </Modal>
@@ -262,9 +262,9 @@ export default function BarbersPage() {
       {/* Status confirm */}
       {statusTarget && (
         <ConfirmDialog
-          title={`${statusTarget.active ? "Deactivate" : "Activate"} barber?`}
-          description={statusTarget.active ? "This barber will no longer be available for new bookings. Existing appointments are preserved." : "This barber will be available for new bookings again."}
-          confirmLabel={statusTarget.active ? "Deactivate barber" : "Activate barber"}
+          title={statusTarget.active ? "Berber pasife alınsın mı?" : "Berber etkinleştirilsin mi?"}
+          description={statusTarget.active ? "Bu berber yeni randevular için kullanılamayacak. Mevcut randevular korunacak." : "Bu berber yeniden yeni randevular için kullanılabilecek."}
+          confirmLabel={statusTarget.active ? "Berberi pasife al" : "Berberi etkinleştir"}
           variant={statusTarget.active ? "danger" : "warning"}
           busy={saving}
           onCancel={() => setStatusTarget(undefined)}
@@ -275,9 +275,9 @@ export default function BarbersPage() {
       {/* Unlink confirm */}
       {unlinkTarget && (
         <ConfirmDialog
-          title="Unlink panel identity?"
-          description={`This removes ${unlinkTarget.display_name}'s panel access link. It does not delete the identity or its tenant membership.`}
-          confirmLabel="Unlink identity"
+          title="Panel hesabı bağlantısı kaldırılsın mı?"
+          description={`${unlinkTarget.display_name} için panel erişim bağlantısı kaldırılacak. Kimlik veya işletme üyeliği silinmeyecek.`}
+          confirmLabel="Hesap bağlantısını kaldır"
           busy={saving}
           onCancel={() => setUnlinkTarget(undefined)}
           onConfirm={() => void unlink()}

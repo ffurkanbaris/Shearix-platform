@@ -159,6 +159,11 @@ func TestTenantOnboardingDomainIntegration(t *testing.T) {
 	if eligible, err := tenantService.TLSAuthorized(ctx, registered.Hostname); err != nil || eligible {
 		t.Fatalf("inactive tenant TLS eligibility=%v err=%v", eligible, err)
 	}
+	// Control-plane inspection remains available while suspended; otherwise
+	// the platform dashboard cannot render the reinstatement action.
+	if domains, err := tenantService.Domains(ctx, created.ID.String()); err != nil || len(domains) != 2 {
+		t.Fatalf("suspended tenant domains=%+v err=%v", domains, err)
+	}
 	if _, err = owner.Exec(ctx, `UPDATE public.tenants SET status='active' WHERE id=$1`, created.ID); err != nil {
 		t.Fatal(err)
 	}

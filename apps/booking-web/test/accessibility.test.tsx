@@ -21,17 +21,17 @@ describe("critical customer form accessibility", () => {
   afterEach(cleanup);
 
   it.each([
-    ["login", <CustomerLogin />, ["Email", "Password"], "Sign in"],
-    ["registration", <Register />, ["Name", "Email"], "Create account"],
-    ["password reset", <ForgotPassword />, ["Email"], "Send new password"],
-    ["password change", <Security />, ["Current password", "New password"], "Change password"],
+    ["login", <CustomerLogin />, ["E-posta", "Şifre"], "Giriş yap"],
+    ["registration", <Register />, ["Ad soyad", "E-posta"], "Hesap oluştur"],
+    ["password reset", <ForgotPassword />, ["E-posta"], "Yeni şifre gönder"],
+    ["password change", <Security />, ["Mevcut şifre", "Yeni şifre"], "Şifreyi değiştir"],
   ] as const)("provides labels, named submit state, and announced errors for %s", async (_name, component, labels, submitName) => {
     const user = userEvent.setup();
     render(component);
     for (const label of labels) {
       const input = screen.getByLabelText(label);
       expect(input).toBeTruthy();
-      await user.type(input, label.includes("Email") ? "user@example.test" : "long-enough-value");
+      await user.type(input, label.includes("E-posta") ? "user@example.test" : "long-enough-value");
     }
     await user.click(screen.getByRole("button", { name: submitName }));
     expect(await screen.findByRole("alert")).toBeTruthy();

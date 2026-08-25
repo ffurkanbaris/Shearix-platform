@@ -39,6 +39,26 @@
 	}
 }
 
+{$PLATFORM_ADMIN_HOST} {
+	reverse_proxy platform-admin-web:3000 {
+		# This private upstream trusts only the edge-defined limiter identity.
+		header_up X-Platform-Client-IP {http.request.remote.host}
+	}
+}
+
+# The primary SaaS hostname is edge-owned and must never enter tenant hostname
+# resolution. There is no marketing application yet, so serve a deliberately
+# static placeholder until one is introduced as its own bounded frontend.
+{$SAAS_DOMAIN} {
+	header {
+		Content-Type "text/html; charset=utf-8"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+	}
+	respond "<!doctype html><html lang=\"tr\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Shearx</title></head><body><main><h1>Shearx</h1><p>Çok yakında.</p></main></body></html>" 200
+}
+
 # A hostless HTTPS site is required for custom domains that are discovered at
 # handshake time. on_demand_tls asks tenant-service before every new issuance;
 # a non-2xx answer aborts the handshake and no certificate is requested.

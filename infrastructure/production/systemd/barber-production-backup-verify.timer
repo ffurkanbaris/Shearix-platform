@@ -1,0 +1,11 @@
+[Unit]
+Description=Verify newest Barber production backup weekly
+
+[Timer]
+OnCalendar=Sun *-*-* 04:30:00
+RandomizedDelaySec=30m
+Persistent=true
+Unit=barber-production-backup-verify.service
+
+[Install]
+WantedBy=timers.target

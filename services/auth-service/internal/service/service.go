@@ -153,6 +153,10 @@ func (s Service) Members(ctx context.Context, tenantID uuid.UUID) ([]domain.Memb
 	return s.repository.Members(ctx, tenantID)
 }
 
+func (s Service) Owners(ctx context.Context, tenantID uuid.UUID) ([]domain.OwnerState, error) {
+	return s.repository.Owners(ctx, tenantID)
+}
+
 func (s Service) Member(ctx context.Context, tenantID, identityID uuid.UUID) (domain.Member, error) {
 	return s.repository.Member(ctx, tenantID, identityID)
 }

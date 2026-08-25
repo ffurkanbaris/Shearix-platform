@@ -122,9 +122,9 @@ export async function proxyGateway(request: Request, path: string[], transport: 
     return response;
   };
 
-  let config: ProxyConfig; try { config = proxyConfig(); } catch { return withRequestID(proxyError(500, "proxy_configuration", "The service is temporarily unavailable.")); }
+  let config: ProxyConfig; try { config = proxyConfig(); } catch { return withRequestID(proxyError(500, "proxy_configuration", "Hizmet geçici olarak kullanılamıyor.")); }
   const url = new URL(`/api/${path.map(encodeURIComponent).join("/")}`, config.gatewayURL); url.search = new URL(request.url).search;
-  const declared = Number(request.headers.get("content-length")); if (Number.isFinite(declared) && declared > config.maxRequestBytes) return withRequestID(proxyError(413, "request_too_large", "The request is too large."));
+  const declared = Number(request.headers.get("content-length")); if (Number.isFinite(declared) && declared > config.maxRequestBytes) return withRequestID(proxyError(413, "request_too_large", "İstek boyutu çok büyük."));
   const timeout = new AbortController(); const timer = setTimeout(() => timeout.abort(), config.timeoutMs); const signal = AbortSignal.any([request.signal, timeout.signal]);
   try {
     const method = request.method.toUpperCase(); const requestBody = method === "GET" || method === "HEAD" ? undefined : await boundedRequestBody(request, config.maxRequestBytes);
@@ -135,11 +135,11 @@ export async function proxyGateway(request: Request, path: string[], transport: 
     const responseData = responseBody.buffer.slice(responseBody.byteOffset, responseBody.byteOffset + responseBody.byteLength) as ArrayBuffer;
     return withRequestID(new Response(responseData, { status: upstream.status, headers }));
   } catch (error) {
-    if (timeout.signal.aborted) return withRequestID(proxyError(504, "gateway_timeout", "The service is taking too long to respond. Please try again."));
-    if (request.signal.aborted) return withRequestID(proxyError(499, "request_cancelled", "The request was cancelled."));
-    if (error instanceof Error && error.message === "request_too_large") return withRequestID(proxyError(413, "request_too_large", "The request is too large."));
-    if (error instanceof Error && error.message === "response_too_large") return withRequestID(proxyError(502, "gateway_response_too_large", "The service returned an invalid response."));
-    return withRequestID(proxyError(502, "gateway_unavailable", "The service is temporarily unavailable. Please try again."));
+    if (timeout.signal.aborted) return withRequestID(proxyError(504, "gateway_timeout", "Hizmet zamanında yanıt vermedi. Lütfen tekrar deneyin."));
+    if (request.signal.aborted) return withRequestID(proxyError(499, "request_cancelled", "İstek iptal edildi."));
+    if (error instanceof Error && error.message === "request_too_large") return withRequestID(proxyError(413, "request_too_large", "İstek boyutu çok büyük."));
+    if (error instanceof Error && error.message === "response_too_large") return withRequestID(proxyError(502, "gateway_response_too_large", "Hizmet geçersiz bir yanıt döndürdü."));
+    return withRequestID(proxyError(502, "gateway_unavailable", "Hizmet geçici olarak kullanılamıyor. Lütfen tekrar deneyin."));
   } finally { clearTimeout(timer); }
 }
 import { request as httpRequest } from "node:http";
