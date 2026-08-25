@@ -25,7 +25,8 @@ trap 'exit 1' HUP INT TERM
 trap on_exit EXIT
 
 docker run --rm -e RESTIC_REPOSITORY -e RESTIC_PASSWORD \
-  -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -v "$dest:/restore" \
+  -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e GOOGLE_PROJECT_ID \
+  -v "$dest:/restore" \
   "$restic_image" restore latest --tag production --target /restore
 
 backup_root=$(find "$dest" -type d -path '*/backup' -print | head -n1)

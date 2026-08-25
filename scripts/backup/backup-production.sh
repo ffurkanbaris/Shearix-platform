@@ -37,6 +37,7 @@ restic() {
   docker run --rm \
     -e RESTIC_REPOSITORY -e RESTIC_PASSWORD \
     -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
+    -e GOOGLE_PROJECT_ID \
     -v "$stage:/backup:ro" "$restic_image" "$@"
 }
 

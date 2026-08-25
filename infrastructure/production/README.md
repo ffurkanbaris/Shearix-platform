@@ -54,8 +54,9 @@ does not deploy the application.
   mode `0600`. Use `production.env.example` as the inventory. Do not place real
   values in Git, shell history, or a Compose file.
 - Use distinct generated values for every listed database role and security
-  token. Give the backup object-store credential write/read access only to its
-  dedicated bucket/prefix; enable provider-side versioning/object lock where
+  token. On GCE, prefer a dedicated VM service account with object access only
+  to the backup bucket; Restic can use its short-lived metadata credentials and
+  no static cloud key is stored. Enable provider-side retention controls where
   available. Restic encrypts content and metadata before upload.
 - Configure a production SMTP account with TLS, a verified `EMAIL_FROM` domain,
   SPF/DKIM/DMARC, provider rate limits sized for reminders, and credentials

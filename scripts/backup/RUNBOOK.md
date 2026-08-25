@@ -35,10 +35,14 @@ sudo systemctl list-timers 'barber-production-backup*'
 ```
 
 Before enabling the timers, initialize the restic repository once using the
-same `RESTIC_REPOSITORY`, `RESTIC_PASSWORD`, and restricted object-store
-credentials from `/etc/barber-appointment/production.env`. Then run each
-service manually and verify that its external heartbeat monitor records the
-success:
+same `RESTIC_REPOSITORY` and `RESTIC_PASSWORD` from
+`/etc/barber-appointment/production.env`. For a GCS `gs:` repository on GCE,
+set `GOOGLE_PROJECT_ID` and grant the VM's dedicated service account object
+access to only the backup bucket; restic uses short-lived metadata-server
+credentials, so no service-account key is stored. For an S3-compatible
+repository, use restricted `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
+credentials instead. Then run each service manually and verify that its
+external heartbeat monitor records the success:
 
 ```sh
 sudo systemctl start barber-production-backup.service
@@ -330,15 +334,11 @@ revisited.
 
 ## Known limitations
 
-- No automated scheduling is provided -- these are one-shot scripts,
-  intended to be invoked by cron/systemd timer/CI on whatever cadence meets
-  your RPO target.
-- No backup encryption or off-host upload is implemented -- dumps/snapshots
-  land on local disk (`output_dir`) as-is; wire up encryption-at-rest and
-  transport to durable/offsite storage (S3, etc.) as a wrapper around these
-  scripts before relying on them for disaster recovery.
-- No retention/rotation policy is implemented -- old timestamped backup
-  directories accumulate until pruned externally.
+- The low-level PostgreSQL and JetStream scripts are intentionally one-shot
+  and create plaintext staging data. In production they must be invoked only
+  through `backup-production.sh`, whose systemd timer, Restic encryption,
+  off-host upload, retention, cleanup, and heartbeat handling provide the
+  required operational controls.
 - `restore-postgres.sh` does not create missing databases -- see "Postgres:
   restore" above for the blank-instance path.
 - These scripts were verified against a single-node dev-shaped Postgres and
