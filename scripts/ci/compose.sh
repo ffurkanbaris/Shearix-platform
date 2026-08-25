@@ -57,6 +57,25 @@ if printf '%s\n' "$platform_block" | grep -q 'published:'; then
   exit 1
 fi
 
+alertmanager_block=$(service_block alertmanager)
+printf '%s\n' "$alertmanager_block" | grep -q '/alertmanager/config/alertmanager.yml' || {
+  echo "Alertmanager does not read its root-only config through the private data volume" >&2
+  exit 1
+}
+if printf '%s\n' "$alertmanager_block" | grep -q '/etc/alertmanager/alertmanager.yml'; then
+  echo "Alertmanager directly mounts a root-only host secret" >&2
+  exit 1
+fi
+init_block=$(service_block observability-volume-init)
+printf '%s\n' "$init_block" | grep -q '/alertmanager-source/alertmanager.yml' || {
+  echo "observability init does not stage the Alertmanager secret" >&2
+  exit 1
+}
+printf '%s\n' "$init_block" | grep -q 'chmod 0400' || {
+  echo "staged Alertmanager secret is not read-only" >&2
+  exit 1
+}
+
 # The local edge must route the operator hostname directly, while its catch-all
 # keeps tenant hostnames on gateway-service.
 grep -q '^http://platform\.localhost' "$repo/infrastructure/caddy/Caddyfile.local"

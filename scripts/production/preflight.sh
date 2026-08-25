@@ -139,5 +139,11 @@ docker run --rm --entrypoint /bin/promtool \
   "$prom_image" check rules /etc/prometheus/alerts.yml >/dev/null 2>&1 || fail "Prometheus alert rules are invalid"
 pass "observability configuration checked"
 
+alertmanager_image=prom/alertmanager:v0.28.1@sha256:27c475db5fb156cab31d5c18a4251ac7ed567746a2483ff264516437a39b15ba
+docker run --rm --user 0:0 --entrypoint amtool \
+  -v "$ALERTMANAGER_CONFIG_FILE:/etc/alertmanager/alertmanager.yml:ro" \
+  "$alertmanager_image" check-config /etc/alertmanager/alertmanager.yml >/dev/null 2>&1 || fail "Alertmanager configuration is invalid"
+pass "Alertmanager configuration checked"
+
 if [ "$failures" -ne 0 ]; then echo "preflight failed with $failures issue(s)" >&2; exit 1; fi
 echo "production preflight passed; no containers were started"

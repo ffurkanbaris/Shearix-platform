@@ -372,6 +372,11 @@ Loki, Alloy, and loopback-only Grafana. Each backend and the gateway expose
 `TestMetricsIsServedLocallyNeverProxied` tests). The bundled Prometheus scrapes
 each service at `:8080/metrics` over the private network.
 
+Keep the canonical Alertmanager receiver file root-owned and mode `0600`.
+The root-only `observability-volume-init` one-shot copies it into the private
+Alertmanager data volume as mode `0400` owned by Alertmanager's non-root UID;
+the long-running container never receives a direct host-secret bind mount.
+
 Minimum checks after any deploy or incident:
 - `dependency_up{service=<svc>,dependency=<postgres|redis|nats>}` is `1`
   for every service that depends on it.
