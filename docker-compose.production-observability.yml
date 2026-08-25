@@ -98,7 +98,7 @@ services:
     cap_add: ["DAC_READ_SEARCH"]
     volumes:
       - ./infrastructure/observability/production/config.alloy:/etc/alloy/config.alloy:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ${PRODUCTION_DATA_ROOT:?PRODUCTION_DATA_ROOT is required}/docker/containers:/var/lib/docker/containers:ro
       - alloy_data:/var/lib/alloy/data
     depends_on: {loki: {condition: service_started}}
     networks: [private]

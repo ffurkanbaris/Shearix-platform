@@ -33,6 +33,7 @@ env \
   PLATFORM_ADMIN_PASSWORD_SCRYPT=00112233445566778899aabbccddeeff:506bc477a50e27e87ccf36b3e0185e962c9ced01bf7f58e58dc8049702234576 \
   PLATFORM_SESSION_SECRET=ci-platform-session-secret-longer-than-32-chars \
   GRAFANA_ADMIN_USER=ci-operator GRAFANA_ADMIN_PASSWORD=ci-grafana-password \
+  PRODUCTION_DATA_ROOT=/var/lib/barber \
   ALERTMANAGER_CONFIG_FILE="$repo/infrastructure/observability/production/alertmanager.example.yml" \
   docker compose -f "$base" -f "$production" -f "$observability" config -o "$resolved"
 
@@ -135,6 +136,11 @@ for service in prometheus alertmanager tempo otel-collector loki alloy; do
     exit 1
   fi
 done
+alloy_block=$(service_block alloy)
+printf '%s\n' "$alloy_block" | grep -q '/var/lib/barber/docker/containers' || {
+  echo "production Alloy does not read logs from the configured Docker data root" >&2
+  exit 1
+}
 service_block grafana | grep -q 'host_ip: 127.0.0.1' || {
   echo "production Grafana is not bound to loopback" >&2
   exit 1
