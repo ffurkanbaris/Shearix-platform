@@ -92,10 +92,11 @@ services:
     <<: *ops-hardening
     image: grafana/alloy:v1.4.2@sha256:625174f60ee3287a4ec9de7e818805f117376f1375169bc73482b41540697376
     command: ["run", "/etc/alloy/config.alloy", "--storage.path=/var/lib/alloy/data"]
-    # Alloy owns only its bookmark state. DAC_READ_SEARCH is required to read
-    # root-owned Docker JSON logs without mounting the privileged Docker socket.
-    user: "473:473"
-    cap_add: ["DAC_READ_SEARCH"]
+    # Docker JSON log directories are 0710 root:root and must be discovered at
+    # runtime. Run as their owner, but retain the shared hardening anchor:
+    # every capability is dropped, no-new-privileges is set, the rootfs is
+    # read-only, and the Docker socket is never mounted.
+    user: "0:0"
     volumes:
       - ./infrastructure/observability/production/config.alloy:/etc/alloy/config.alloy:ro
       - ${PRODUCTION_DATA_ROOT:?PRODUCTION_DATA_ROOT is required}/docker/containers:/var/lib/docker/containers:ro

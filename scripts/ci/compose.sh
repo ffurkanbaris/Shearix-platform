@@ -141,6 +141,14 @@ printf '%s\n' "$alloy_block" | grep -q '/var/lib/barber/docker/containers' || {
   echo "production Alloy does not read logs from the configured Docker data root" >&2
   exit 1
 }
+printf '%s\n' "$alloy_block" | grep -Eq "user: ['\"]?0:0['\"]?" || {
+  echo "production Alloy cannot traverse root-owned Docker log directories" >&2
+  exit 1
+}
+if printf '%s\n' "$alloy_block" | grep -q 'DAC_READ_SEARCH'; then
+  echo "production Alloy retains an unnecessary filesystem capability" >&2
+  exit 1
+fi
 service_block grafana | grep -q 'host_ip: 127.0.0.1' || {
   echo "production Grafana is not bound to loopback" >&2
   exit 1
